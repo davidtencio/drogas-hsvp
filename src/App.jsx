@@ -48,6 +48,8 @@ const App = () => {
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
   const [cloudStatus, setCloudStatus] = useState('Sincronizando...');
 
+  const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
+
   useEffect(() => {
     ensureAnonymousSignIn().catch(() => {});
   }, []);
@@ -221,13 +223,13 @@ const App = () => {
         medId: formData.get('medicationId'),
         type: formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
-        service: formData.get('service'),
-        cama: formData.get('cama'),
-        prescription: formData.get('prescription'),
+        service: toUpper(formData.get('service')),
+        cama: toUpper(formData.get('cama')),
+        prescription: toUpper(formData.get('prescription')),
         rxType,
         rxQuantity,
         rxUsed,
-        pharmacist: formData.get('pharmacist'),
+        pharmacist: toUpper(formData.get('pharmacist')),
       };
       setTransactions([newTransaction, ...transactions]);
     } else if (modalType === 'kardex-edit') {
@@ -241,33 +243,33 @@ const App = () => {
         medId: formData.get('medicationId'),
         type: formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
-        service: formData.get('service'),
-        cama: formData.get('cama'),
-        prescription: formData.get('prescription'),
+        service: toUpper(formData.get('service')),
+        cama: toUpper(formData.get('cama')),
+        prescription: toUpper(formData.get('prescription')),
         rxType,
         rxQuantity,
         rxUsed,
-        pharmacist: formData.get('pharmacist'),
+        pharmacist: toUpper(formData.get('pharmacist')),
       };
       setTransactions(transactions.map((t) => (t.id === editingTransactionId ? updated : t)));
     } else if (modalType === 'auditoria') {
       const newExp = {
         id: Date.now(),
         fecha: now,
-        servicio: formData.get('servicio'),
-        cedula: formData.get('cedula'),
-        receta: formData.get('receta'),
-        medicamento: formData.get('medicamento'),
-        dosis: formData.get('dosis'),
-        condicion: formData.get('condicion'),
-        farmaceutico: formData.get('farmaceutico'),
+        servicio: toUpper(formData.get('servicio')),
+        cedula: toUpper(formData.get('cedula')),
+        receta: toUpper(formData.get('receta')),
+        medicamento: toUpper(formData.get('medicamento')),
+        dosis: toUpper(formData.get('dosis')),
+        condicion: toUpper(formData.get('condicion')),
+        farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes([newExp, ...expedientes]);
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
         id: newId,
-        name: formData.get('medName').toUpperCase().trim(),
+        name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
       };
       setMedications([newMed, ...medications]);
@@ -275,15 +277,15 @@ const App = () => {
     } else if (modalType === 'med-edit') {
       const updated = {
         id: editingMedId,
-        name: formData.get('medName').toUpperCase().trim(),
+        name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
       };
       setMedications(medications.map((m) => (m.id === editingMedId ? updated : m)));
     } else if (modalType === 'service-add') {
-      const newService = formData.get('serviceName').toUpperCase().trim();
+      const newService = toUpper(formData.get('serviceName'));
       setServices([newService, ...services]);
     } else if (modalType === 'pharmacist-add') {
-      const newPharmacist = formData.get('pharmacistName').toUpperCase().trim();
+      const newPharmacist = toUpper(formData.get('pharmacistName'));
       setPharmacists([newPharmacist, ...pharmacists]);
     }
     setShowModal(false);
@@ -489,13 +491,13 @@ const App = () => {
               <table className="w-full text-left text-sm border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Fecha</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Movimiento</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Servicio / Cama</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Tipo de Receta</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Receta</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Acciones</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-right">Farmaceutico</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Acciones</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -503,17 +505,17 @@ const App = () => {
                     .filter((t) => t.medId === selectedMedId)
                     .map((t) => (
                       <tr key={t.id} className="hover:bg-slate-50/50">
-                        <td className="px-6 py-4 text-slate-500">{t.date}</td>
-                        <td className="px-6 py-4">
-                          <span className={`font-bold flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
                             {t.amount}
                           </span>
                         </td>
-                        <td className="px-6 py-4 font-medium text-slate-700">
+                        <td className="px-6 py-4 font-medium text-slate-700 text-center">
                           {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 text-center">
                           {t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                             <select
                               value={t.rxUsed ?? 0}
@@ -542,9 +544,9 @@ const App = () => {
                             <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 font-mono text-xs text-blue-600">{t.prescription || '---'}</td>
+                        <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{t.prescription || '---'}</td>
                         <td className="px-6 py-4">
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 justify-center">
                             <button
                               onClick={() => {
                                 setEditingTransactionId(t.id);
@@ -568,7 +570,7 @@ const App = () => {
                             </button>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-right text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                        <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
                       </tr>
                     ))}
                 </tbody>
@@ -582,23 +584,23 @@ const App = () => {
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Fecha</th>
-                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Cedula</th>
-                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Farmaco / Dosis</th>
-                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase">Estado</th>
-                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-right">Farmaceutico</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Cedula</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaco / Dosis</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Estado</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {expedientes.map((e) => (
                   <tr key={e.id} className="hover:bg-slate-50/50">
-                    <td className="px-6 py-4 text-slate-500">{e.fecha}</td>
-                    <td className="px-6 py-4 font-mono font-bold text-slate-700">{e.cedula}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 text-slate-500 text-center">{e.fecha}</td>
+                    <td className="px-6 py-4 font-mono font-bold text-slate-700 text-center">{e.cedula}</td>
+                    <td className="px-6 py-4 text-center">
                       <p className="font-bold text-slate-800">{e.medicamento}</p>
                       <p className="text-[10px] text-slate-400">{e.dosis}</p>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 text-center">
                       <span
                         className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider ${
                           e.condicion === 'VALIDACION' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'
@@ -607,7 +609,7 @@ const App = () => {
                         {e.condicion}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right text-[10px] font-bold text-slate-400 uppercase">{e.farmaceutico}</td>
+                    <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{e.farmaceutico}</td>
                   </tr>
                 ))}
               </tbody>
