@@ -58,6 +58,21 @@ const App = () => {
     return Math.min(maxUsed + 1, rxQuantity);
   };
 
+  const handleOpenRxUse = (transaction) => {
+    if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
+    const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
+    if (nextUsed <= transaction.rxUsed) return;
+    const now = new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16);
+    const newTransaction = {
+      ...transaction,
+      id: Date.now(),
+      date: now,
+      type: 'OUT',
+      rxUsed: nextUsed,
+    };
+    setTransactions([newTransaction, ...transactions]);
+  };
+
   useEffect(() => {
     ensureAnonymousSignIn().catch(() => {});
   }, []);
@@ -528,29 +543,14 @@ const App = () => {
                         </td>
                         <td className="px-6 py-4 text-center">
                           {t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
-                            <select
-                              value={t.rxUsed ?? 0}
-                              onChange={(e) => {
-                                const nextUsed = parseInt(e.target.value, 10);
-                                setTransactions(
-                                  transactions.map((tx) =>
-                                    tx.id === t.id
-                                      ? {
-                                          ...tx,
-                                          rxUsed: nextUsed,
-                                        }
-                                      : tx,
-                                  ),
-                                );
-                              }}
-                              className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700"
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRxUse(t)}
+                              className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                              title="Registrar nuevo rebajo"
                             >
-                              {Array.from({ length: t.rxQuantity + 1 }).map((_, i) => (
-                                <option key={i} value={i}>
-                                  {i} de {t.rxQuantity}
-                                </option>
-                              ))}
-                            </select>
+                              {t.rxUsed || 0} de {t.rxQuantity}
+                            </button>
                           ) : (
                             <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
                           )}
