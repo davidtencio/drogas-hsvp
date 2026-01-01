@@ -400,6 +400,15 @@ const App = () => {
             </button>
             <button
               onClick={() => {
+                setModalType('pharmacist-manage');
+                setShowModal(true);
+              }}
+              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+            >
+              Eliminar Farmaceutico
+            </button>
+            <button
+              onClick={() => {
                 setModalType(activeTab === 'auditoria' ? 'auditoria' : 'kardex');
                 setRxTypeValue('CERRADA');
                 setShowModal(true);
@@ -691,7 +700,9 @@ const App = () => {
                           ? 'Nuevo Servicio'
                           : modalType === 'pharmacist-add'
                             ? 'Nuevo Farmaceutico'
-                            : 'Nuevo Medicamento'}
+                            : modalType === 'pharmacist-manage'
+                              ? 'Eliminar Farmaceutico'
+                              : 'Nuevo Medicamento'}
               </h3>
               <button
                 onClick={() => {
@@ -706,7 +717,7 @@ const App = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="p-8 space-y-4">
+            <form onSubmit={modalType === 'pharmacist-manage' ? (e) => e.preventDefault() : handleSave} className="p-8 space-y-4">
               {modalType === 'auditoria' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -810,6 +821,31 @@ const App = () => {
                 <>
                   <InputLabel label="Nombre del Farmaceutico" name="pharmacistName" required />
                 </>
+              ) : modalType === 'pharmacist-manage' ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500">Eliminar un farmaceutico no afecta el historial de rebajos.</p>
+                  <div className="space-y-2">
+                    {pharmacists.map((name) => (
+                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-slate-700">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPharmacists(pharmacists.filter((p) => p !== name))}
+                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+                  >
+                    Cerrar
+                  </button>
+                </div>
               ) : (
                 <>
                   <InputLabel
@@ -826,12 +862,14 @@ const App = () => {
                   />
                 </>
               )}
-              <button
-                type="submit"
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
-              >
-                Guardar Registro
-              </button>
+              {modalType !== 'pharmacist-manage' && (
+                <button
+                  type="submit"
+                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
+                >
+                  Guardar Registro
+                </button>
+              )}
             </form>
           </div>
         </div>
