@@ -149,6 +149,7 @@ const App = () => {
     if (modalType === 'kardex') {
       const rxType = formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
+      const rxUsed = rxType === 'ABIERTA' && rxQuantity > 0 ? 1 : 0;
       const newTransaction = {
         id: Date.now(),
         date: now,
@@ -160,7 +161,7 @@ const App = () => {
         prescription: formData.get('prescription'),
         rxType,
         rxQuantity,
-        rxUsed: 0,
+        rxUsed,
         pharmacist: formData.get('pharmacist'),
       };
       setTransactions([newTransaction, ...transactions]);
