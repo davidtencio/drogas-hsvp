@@ -650,6 +650,27 @@ const App = () => {
                   />
                   <div className="grid grid-cols-2 gap-4">
                     <SelectLabel
+                      label="Tipo de Receta"
+                      name="rxType"
+                      options={[
+                        { value: 'CERRADA', label: 'Cerrada' },
+                        { value: 'ABIERTA', label: 'Abierta' },
+                      ]}
+                      isObject
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
+                      onChange={(e) => setRxTypeValue(e.target.value)}
+                    />
+                    <InputLabel
+                      label="Cantidad Receta"
+                      name="rxQuantity"
+                      type="number"
+                      disabled={rxTypeValue !== 'ABIERTA'}
+                      required={rxTypeValue === 'ABIERTA'}
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <SelectLabel
                       label="Tipo Movimiento"
                       name="type"
                       options={[{ value: 'OUT', label: 'Salida' }, { value: 'IN', label: 'Entrada' }]}
@@ -682,27 +703,6 @@ const App = () => {
                     name="prescription"
                     defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
                   />
-                  <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel
-                      label="Tipo de Receta"
-                      name="rxType"
-                      options={[
-                        { value: 'CERRADA', label: 'Cerrada' },
-                        { value: 'ABIERTA', label: 'Abierta' },
-                      ]}
-                      isObject
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
-                      onChange={(e) => setRxTypeValue(e.target.value)}
-                    />
-                    <InputLabel
-                      label="Cantidad Receta"
-                      name="rxQuantity"
-                      type="number"
-                      disabled={rxTypeValue !== 'ABIERTA'}
-                      required={rxTypeValue === 'ABIERTA'}
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
-                    />
-                  </div>
                   <SelectLabel
                     label="Farmaceutico"
                     name="pharmacist"
