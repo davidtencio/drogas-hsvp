@@ -60,7 +60,8 @@ const App = () => {
 
   const parseDateTime = (value) => {
     if (!value) return null;
-    const [datePart, timePart] = value.split(' ');
+    const cleaned = value.replace(',', '');
+    const [datePart, timePart] = cleaned.split(' ');
     if (!datePart) return null;
     const [day, month, year] = datePart.split('/').map(Number);
     if (!day || !month || !year) return null;
