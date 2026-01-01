@@ -50,6 +50,20 @@ const App = () => {
     ensureAnonymousSignIn().catch(() => {});
   }, []);
 
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
+      if (stored.transactions?.length) setTransactions(stored.transactions);
+      if (stored.expedientes?.length) setExpedientes(stored.expedientes);
+      if (stored.medications?.length) setMedications(stored.medications);
+      if (stored.services?.length) setServices(stored.services);
+      if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
+      if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
+    } catch {
+      localStorage.removeItem('pharmaControlData');
+    }
+  }, []);
+
   // Data States
   const [transactions, setTransactions] = useState([
     {
@@ -88,6 +102,18 @@ const App = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
+
+  useEffect(() => {
+    const payload = {
+      transactions,
+      expedientes,
+      medications,
+      services,
+      pharmacists,
+      selectedMedId,
+    };
+    localStorage.setItem('pharmaControlData', JSON.stringify(payload));
+  }, [transactions, expedientes, medications, services, pharmacists, selectedMedId]);
 
   // Computations
   const currentInventory = useMemo(() => {
