@@ -660,14 +660,17 @@ const App = () => {
                       defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
                       onChange={(e) => setRxTypeValue(e.target.value)}
                     />
-                    <InputLabel
-                      label="Cantidad Receta"
-                      name="rxQuantity"
-                      type="number"
-                      disabled={rxTypeValue !== 'ABIERTA'}
-                      required={rxTypeValue === 'ABIERTA'}
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
-                    />
+                    {rxTypeValue === 'ABIERTA' ? (
+                      <InputLabel
+                        label="Cantidad Receta"
+                        name="rxQuantity"
+                        type="number"
+                        required
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
+                      />
+                    ) : (
+                      <div />
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <SelectLabel
