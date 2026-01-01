@@ -46,6 +46,7 @@ const App = () => {
   const [services, setServices] = useState(INITIAL_SERVICES);
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
+  const [cloudStatus, setCloudStatus] = useState('Sincronizando...');
 
   useEffect(() => {
     ensureAnonymousSignIn().catch(() => {});
@@ -81,7 +82,10 @@ const App = () => {
           localStorage.removeItem('pharmaControlData');
         }
       } finally {
-        if (!cancelled) setCloudReady(true);
+        if (!cancelled) {
+          setCloudReady(true);
+          setCloudStatus('Sincronizado');
+        }
       }
     };
     hydrateFromCloud();
@@ -142,8 +146,12 @@ const App = () => {
     localStorage.setItem('pharmaControlData', JSON.stringify(payload));
     if (!cloudReady) return;
     ensureAnonymousSignIn()
-      .then((user) => setDoc(doc(db, 'appState', user.uid), payload, { merge: true }))
-      .catch(() => {});
+      .then((user) => {
+        setCloudStatus('Sincronizando...');
+        return setDoc(doc(db, 'appState', user.uid), payload, { merge: true });
+      })
+      .then(() => setCloudStatus('Sincronizado'))
+      .catch(() => setCloudStatus('Sin conexion'));
   }, [transactions, expedientes, medications, services, pharmacists, selectedMedId]);
 
   // Computations
@@ -333,6 +341,17 @@ const App = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border ${
+                cloudStatus === 'Sincronizado'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : cloudStatus === 'Sin conexion'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+              }`}
+            >
+              {cloudStatus}
+            </span>
             <button
               onClick={() => {
                 setModalType('service-add');
