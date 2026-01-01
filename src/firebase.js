@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCWpDWiQLOUuqDjLpY_ea8n2K8s2HcbwlY',
@@ -15,6 +16,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 const auth = getAuth(app);
+const db = getFirestore(app);
 
 const ensureAnonymousSignIn = () =>
   new Promise((resolve, reject) => {
@@ -35,4 +37,4 @@ const ensureAnonymousSignIn = () =>
     });
   });
 
-export { app, analytics, auth, ensureAnonymousSignIn };
+export { app, analytics, auth, db, ensureAnonymousSignIn };

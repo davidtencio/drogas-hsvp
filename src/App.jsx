@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   Loader2,
 } from 'lucide-react';
-import { ensureAnonymousSignIn } from './firebase';
+import { db, ensureAnonymousSignIn } from './firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // --- CONFIGURACION ---
 const apiKey = '';
@@ -51,17 +52,42 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
-      if (stored.transactions?.length) setTransactions(stored.transactions);
-      if (stored.expedientes?.length) setExpedientes(stored.expedientes);
-      if (stored.medications?.length) setMedications(stored.medications);
-      if (stored.services?.length) setServices(stored.services);
-      if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
-      if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
-    } catch {
-      localStorage.removeItem('pharmaControlData');
-    }
+    let cancelled = false;
+    const hydrateFromCloud = async () => {
+      try {
+        const user = await ensureAnonymousSignIn();
+        const ref = doc(db, 'appState', user.uid);
+        const snap = await getDoc(ref);
+        if (cancelled) return;
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.transactions?.length) setTransactions(data.transactions);
+          if (data.expedientes?.length) setExpedientes(data.expedientes);
+          if (data.medications?.length) setMedications(data.medications);
+          if (data.services?.length) setServices(data.services);
+          if (data.pharmacists?.length) setPharmacists(data.pharmacists);
+          if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
+        }
+      } catch {
+        try {
+          const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
+          if (stored.transactions?.length) setTransactions(stored.transactions);
+          if (stored.expedientes?.length) setExpedientes(stored.expedientes);
+          if (stored.medications?.length) setMedications(stored.medications);
+          if (stored.services?.length) setServices(stored.services);
+          if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
+          if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
+        } catch {
+          localStorage.removeItem('pharmaControlData');
+        }
+      } finally {
+        if (!cancelled) setCloudReady(true);
+      }
+    };
+    hydrateFromCloud();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Data States
@@ -102,6 +128,7 @@ const App = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
+  const [cloudReady, setCloudReady] = useState(false);
 
   useEffect(() => {
     const payload = {
@@ -113,6 +140,10 @@ const App = () => {
       selectedMedId,
     };
     localStorage.setItem('pharmaControlData', JSON.stringify(payload));
+    if (!cloudReady) return;
+    ensureAnonymousSignIn()
+      .then((user) => setDoc(doc(db, 'appState', user.uid), payload, { merge: true }))
+      .catch(() => {});
   }, [transactions, expedientes, medications, services, pharmacists, selectedMedId]);
 
   // Computations
