@@ -58,6 +58,16 @@ const App = () => {
     return Math.min(maxUsed + 1, rxQuantity);
   };
 
+  const parseDateTime = (value) => {
+    if (!value) return null;
+    const [datePart, timePart] = value.split(' ');
+    if (!datePart) return null;
+    const [day, month, year] = datePart.split('/').map(Number);
+    if (!day || !month || !year) return null;
+    const [hour = 0, minute = 0] = (timePart || '').split(':').map(Number);
+    return new Date(year, month - 1, day, hour, minute);
+  };
+
   const handleOpenRxUse = (transaction) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
@@ -196,6 +206,23 @@ const App = () => {
     }),
     [currentInventory, expedientes],
   );
+
+  const { recentTransactions, historicTransactions } = useMemo(() => {
+    const medTransactions = transactions.filter((t) => t.medId === selectedMedId);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    const recent = [];
+    const historic = [];
+    medTransactions.forEach((t) => {
+      const when = parseDateTime(t.date);
+      if (when && when >= cutoff) {
+        recent.push(t);
+      } else {
+        historic.push(t);
+      }
+    });
+    return { recentTransactions: recent, historicTransactions: historic };
+  }, [transactions, selectedMedId]);
 
   // AI Logic
   const handleAiChat = async (e) => {
@@ -536,11 +563,9 @@ const App = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {transactions
-                    .filter((t) => t.medId === selectedMedId)
-                    .map((t) => (
-                      <tr key={t.id} className="hover:bg-slate-50/50">
-                        <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                  {recentTransactions.map((t) => (
+                    <tr key={t.id} className="hover:bg-slate-50/50">
+                      <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                         <td className="px-6 py-4 text-center">
                           <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
@@ -591,8 +616,98 @@ const App = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
-                      </tr>
-                    ))}
+                    </tr>
+                  ))}
+                  {recentTransactions.length === 0 && (
+                    <tr>
+                      <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
+                        Sin rebajos en la ultima semana.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 className="font-bold text-slate-700 text-sm">Historico (anteriores a 7 dias)</h3>
+              </div>
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Acciones</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {historicTransactions.map((t) => (
+                    <tr key={t.id} className="hover:bg-slate-50/50">
+                      <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                          {t.amount}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-medium text-slate-700 text-center">
+                        {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRxUse(t)}
+                            className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                            title="Registrar nuevo rebajo"
+                          >
+                            {t.rxUsed || 0} de {t.rxQuantity}
+                          </button>
+                        ) : (
+                          <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{t.prescription || '---'}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2 justify-center">
+                          <button
+                            onClick={() => {
+                              setEditingTransactionId(t.id);
+                              setModalType('kardex-edit');
+                              setRxTypeValue(t.rxType || 'CERRADA');
+                              setShowModal(true);
+                            }}
+                            className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => {
+                              const confirmDelete = window.confirm('Eliminar este movimiento?');
+                              if (!confirmDelete) return;
+                              setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                            }}
+                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                    </tr>
+                  ))}
+                  {historicTransactions.length === 0 && (
+                    <tr>
+                      <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
+                        Sin historico anterior.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
