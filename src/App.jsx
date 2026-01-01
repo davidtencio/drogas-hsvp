@@ -49,6 +49,14 @@ const App = () => {
   const [cloudStatus, setCloudStatus] = useState('Sincronizando...');
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
+  const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
+    const matches = items.filter(
+      (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
+    );
+    if (matches.length === 0) return 1;
+    const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
+    return Math.min(maxUsed + 1, rxQuantity);
+  };
 
   useEffect(() => {
     ensureAnonymousSignIn().catch(() => {});
@@ -216,16 +224,19 @@ const App = () => {
     if (modalType === 'kardex') {
       const rxType = formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
-      const rxUsed = rxType === 'ABIERTA' && rxQuantity > 0 ? 1 : 0;
+      const medId = formData.get('medicationId');
+      const prescription = toUpper(formData.get('prescription'));
+      const rxUsed =
+        rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity) : 0;
       const newTransaction = {
         id: Date.now(),
         date: now,
-        medId: formData.get('medicationId'),
+        medId,
         type: formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
         service: toUpper(formData.get('service')),
         cama: toUpper(formData.get('cama')),
-        prescription: toUpper(formData.get('prescription')),
+        prescription,
         rxType,
         rxQuantity,
         rxUsed,
