@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
-import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -18,23 +18,4 @@ const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const ensureAnonymousSignIn = () =>
-  new Promise((resolve, reject) => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        unsubscribe();
-        resolve(user);
-        return;
-      }
-      try {
-        const credential = await signInAnonymously(auth);
-        unsubscribe();
-        resolve(credential.user);
-      } catch (error) {
-        unsubscribe();
-        reject(error);
-      }
-    });
-  });
-
-export { app, analytics, auth, db, ensureAnonymousSignIn };
+export { app, analytics, auth, db };

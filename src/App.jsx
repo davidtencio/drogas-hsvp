@@ -14,8 +14,9 @@ import {
   PlusCircle,
   ShieldCheck,
 } from 'lucide-react';
-import { db, ensureAnonymousSignIn } from './firebase';
+import { auth, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -47,6 +48,11 @@ const App = () => {
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
   const [cloudStatus, setCloudStatus] = useState('Sincronizando...');
   const [condiciones, setCondiciones] = useState(INITIAL_CONDICIONES);
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const formatCurrency = (value) => {
@@ -96,16 +102,35 @@ const App = () => {
     setTransactions([newTransaction, ...transactions]);
   };
 
+  const handleAuth = async (mode) => {
+    setAuthError('');
+    try {
+      if (mode === 'login') {
+        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      } else {
+        await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+      }
+    } catch {
+      setAuthError('Credenciales invalidas o usuario existente.');
+    }
+  };
+
   useEffect(() => {
-    ensureAnonymousSignIn().catch(() => {});
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthLoading(false);
+      setCloudStatus(user ? 'Sincronizado' : 'Sin sesion');
+      if (!user) setCloudReady(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const hydrateFromCloud = async () => {
       try {
-        const user = await ensureAnonymousSignIn();
-        const ref = doc(db, 'appState', user.uid);
+        const ref = doc(db, 'appState', authUser.uid);
         const snap = await getDoc(ref);
         if (cancelled) return;
         if (snap.exists()) {
@@ -144,7 +169,7 @@ const App = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   // Data States
   const [transactions, setTransactions] = useState([
@@ -194,12 +219,9 @@ const App = () => {
       selectedMedId,
     };
     localStorage.setItem('pharmaControlData', JSON.stringify(payload));
-    if (!cloudReady) return;
-    ensureAnonymousSignIn()
-      .then((user) => {
-        setCloudStatus('Sincronizando...');
-        return setDoc(doc(db, 'appState', user.uid), payload, { merge: true });
-      })
+    if (!cloudReady || !authUser) return;
+    setCloudStatus('Sincronizando...');
+    setDoc(doc(db, 'appState', authUser.uid), payload, { merge: true })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
@@ -456,6 +478,14 @@ const App = () => {
             >
               {cloudStatus}
             </span>
+            {authUser && (
+              <button
+                onClick={() => signOut(auth)}
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+              >
+                Salir
+              </button>
+            )}
             <div className="relative">
               <button
                 onClick={() => setShowCatalogMenu((prev) => !prev)}
@@ -997,6 +1027,36 @@ const App = () => {
         )}
 
       </main>
+
+      {!authUser && !authLoading && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-200">
+            <div className="p-6 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-bold text-slate-800 uppercase tracking-tight text-sm">Iniciar Sesion</h3>
+              <p className="text-xs text-slate-500 mt-1">Use su correo y contrasena para sincronizar entre equipos.</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <InputLabel label="Correo" name="authEmail" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} />
+              <InputLabel label="Contrasena" name="authPassword" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
+              {authError && <p className="text-xs font-bold text-rose-600">{authError}</p>}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handleAuth('login')}
+                  className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-xs shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest"
+                >
+                  Ingresar
+                </button>
+                <button
+                  onClick={() => handleAuth('register')}
+                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-xs shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest"
+                >
+                  Crear Usuario
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Simplified Modal */}
       {showModal && (
