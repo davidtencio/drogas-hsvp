@@ -19,12 +19,12 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
-  { id: 'morf-15', name: 'MORFINA 15 MG', type: 'Estupefaciente', unitPrice: 0 },
-  { id: 'fent-50', name: 'FENTANYL 50 MCG', type: 'Estupefaciente', unitPrice: 0 },
-  { id: 'diaz-10', name: 'DIAZEPAM 10 MG', type: 'Psicotropico', unitPrice: 0 },
-  { id: 'midaz-15', name: 'MIDAZOLAM 15 MG', type: 'Psicotropico', unitPrice: 0 },
-  { id: 'clon-2', name: 'CLONAZEPAM 2 MG', type: 'Psicotropico', unitPrice: 0 },
-  { id: 'feno-50', name: 'FENOBARBITAL 50 MG', type: 'Psicotropico', unitPrice: 0 },
+  { id: 'morf-15', name: 'MORFINA 15 MG', type: 'Estupefaciente', unitPrice: 0, quota: 0 },
+  { id: 'fent-50', name: 'FENTANYL 50 MCG', type: 'Estupefaciente', unitPrice: 0, quota: 0 },
+  { id: 'diaz-10', name: 'DIAZEPAM 10 MG', type: 'Psicotropico', unitPrice: 0, quota: 0 },
+  { id: 'midaz-15', name: 'MIDAZOLAM 15 MG', type: 'Psicotropico', unitPrice: 0, quota: 0 },
+  { id: 'clon-2', name: 'CLONAZEPAM 2 MG', type: 'Psicotropico', unitPrice: 0, quota: 0 },
+  { id: 'feno-50', name: 'FENOBARBITAL 50 MG', type: 'Psicotropico', unitPrice: 0, quota: 0 },
 ];
 
 const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UCI', 'CLINICA DEL DOLOR'];
@@ -364,6 +364,7 @@ const App = () => {
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
         unitPrice: parseCurrency(formData.get('unitPrice')),
+        quota: parseInt(formData.get('quota'), 10) || 0,
       };
       setMedications([newMed, ...medications]);
       setSelectedMedId(newId);
@@ -373,6 +374,7 @@ const App = () => {
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
         unitPrice: parseCurrency(formData.get('unitPrice')),
+        quota: parseInt(formData.get('quota'), 10) || 0,
       };
       setMedications(medications.map((m) => (m.id === editingMedId ? updated : m)));
     } else if (modalType === 'service-add') {
@@ -581,6 +583,10 @@ const App = () => {
                     <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500 font-bold uppercase tracking-wider">
                       <span>Min recomendado</span>
                       <span className="text-slate-700">{med.minRecommended}</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                      <span>Cuota</span>
+                      <span className="text-slate-700">{med.quota ?? 0}</span>
                     </div>
                   </div>
                 ))}
@@ -1335,6 +1341,12 @@ const App = () => {
                       if (!value) return;
                       e.target.value = formatCurrency(parseCurrency(value));
                     }}
+                  />
+                  <InputLabel
+                    label="Cuota"
+                    name="quota"
+                    type="number"
+                    defaultValue={medications.find((m) => m.id === editingMedId)?.quota ?? ''}
                   />
                 </>
               )}
