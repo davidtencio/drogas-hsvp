@@ -680,7 +680,7 @@ const App = () => {
                     }}
                     className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-700"
                   >
-                    Ingreso Rapido
+                    Ingreso Medicamento
                   </button>
                   <button
                     onClick={() => {
