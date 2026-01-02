@@ -588,6 +588,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('service-add');
                       setShowModal(true);
                     }}
@@ -598,6 +599,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('service-manage');
                       setShowModal(true);
                     }}
@@ -609,6 +611,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('pharmacist-add');
                       setShowModal(true);
                     }}
@@ -619,6 +622,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('pharmacist-manage');
                       setShowModal(true);
                     }}
@@ -630,6 +634,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('condition-add');
                       setShowModal(true);
                     }}
@@ -640,6 +645,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setShowCatalogMenu(false);
+                      setIsQuickIngreso(false);
                       setModalType('condition-manage');
                       setShowModal(true);
                     }}
@@ -738,6 +744,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setModalType('med-add');
+                      setIsQuickIngreso(false);
                       setShowModal(true);
                     }}
                     className="bg-slate-900 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800"
@@ -770,6 +777,7 @@ const App = () => {
                     onClick={() => {
                       setEditingMedId(selectedMedId);
                       setModalType('med-edit');
+                      setIsQuickIngreso(false);
                       setShowModal(true);
                     }}
                     className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -870,6 +878,7 @@ const App = () => {
                                   setEditingTransactionId(t.id);
                                   setModalType('kardex-edit');
                                   setRxTypeValue(t.rxType || 'CERRADA');
+                                  setIsQuickIngreso(false);
                                   setShowModal(true);
                                 }}
                                 className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -979,6 +988,7 @@ const App = () => {
                                 setEditingTransactionId(t.id);
                                 setModalType('kardex-edit');
                                 setRxTypeValue(t.rxType || 'CERRADA');
+                                setIsQuickIngreso(false);
                                 setShowModal(true);
                               }}
                               className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -1056,6 +1066,7 @@ const App = () => {
                           onClick={() => {
                             setEditingExpedienteId(e.id);
                             setModalType('auditoria-edit');
+                            setIsQuickIngreso(false);
                             setShowModal(true);
                           }}
                           className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
