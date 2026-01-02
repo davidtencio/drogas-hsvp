@@ -19,12 +19,12 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
-  { id: 'morf-15', name: 'MORFINA 15 MG', type: 'Estupefaciente' },
-  { id: 'fent-50', name: 'FENTANYL 50 MCG', type: 'Estupefaciente' },
-  { id: 'diaz-10', name: 'DIAZEPAM 10 MG', type: 'Psicotropico' },
-  { id: 'midaz-15', name: 'MIDAZOLAM 15 MG', type: 'Psicotropico' },
-  { id: 'clon-2', name: 'CLONAZEPAM 2 MG', type: 'Psicotropico' },
-  { id: 'feno-50', name: 'FENOBARBITAL 50 MG', type: 'Psicotropico' },
+  { id: 'morf-15', name: 'MORFINA 15 MG', type: 'Estupefaciente', unitPrice: 0 },
+  { id: 'fent-50', name: 'FENTANYL 50 MCG', type: 'Estupefaciente', unitPrice: 0 },
+  { id: 'diaz-10', name: 'DIAZEPAM 10 MG', type: 'Psicotropico', unitPrice: 0 },
+  { id: 'midaz-15', name: 'MIDAZOLAM 15 MG', type: 'Psicotropico', unitPrice: 0 },
+  { id: 'clon-2', name: 'CLONAZEPAM 2 MG', type: 'Psicotropico', unitPrice: 0 },
+  { id: 'feno-50', name: 'FENOBARBITAL 50 MG', type: 'Psicotropico', unitPrice: 0 },
 ];
 
 const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UCI', 'CLINICA DEL DOLOR'];
@@ -351,6 +351,7 @@ const App = () => {
         id: newId,
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
+        unitPrice: parseFloat(formData.get('unitPrice')) || 0,
       };
       setMedications([newMed, ...medications]);
       setSelectedMedId(newId);
@@ -359,6 +360,7 @@ const App = () => {
         id: editingMedId,
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
+        unitPrice: parseFloat(formData.get('unitPrice')) || 0,
       };
       setMedications(medications.map((m) => (m.id === editingMedId ? updated : m)));
     } else if (modalType === 'service-add') {
@@ -1303,6 +1305,13 @@ const App = () => {
                     name="medType"
                     options={MED_TYPES}
                     defaultValue={medications.find((m) => m.id === editingMedId)?.type || MED_TYPES[0]}
+                  />
+                  <InputLabel
+                    label="Precio Unitario (CRC)"
+                    name="unitPrice"
+                    type="number"
+                    step="0.01"
+                    defaultValue={medications.find((m) => m.id === editingMedId)?.unitPrice ?? ''}
                   />
                 </>
               )}
