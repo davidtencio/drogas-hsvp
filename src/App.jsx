@@ -194,7 +194,7 @@ const App = () => {
   // Computations
   const currentInventory = useMemo(() => {
     return medications.map((med) => {
-      const medTransactions = transactions.filter((t) => t.medId === med.id);
+      const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
       const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
       return { ...med, stock };
     });
@@ -300,6 +300,27 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
+    } else if (modalType === 'cierre') {
+      const cierreTurno = toUpper(formData.get('turno'));
+      const newCierre = {
+        id: Date.now(),
+        date: now,
+        medId: selectedMedId,
+        type: 'IN',
+        amount: 0,
+        service: 'CIERRE DE INVENTARIO',
+        cama: '',
+        prescription: '',
+        rxType: 'CERRADA',
+        rxQuantity: 0,
+        rxUsed: 0,
+        pharmacist: toUpper(formData.get('farmaceutico')),
+        isCierre: true,
+        cierreTurno,
+        totalRecetas: parseInt(formData.get('totalRecetas'), 10) || 0,
+        totalMedicamento: parseInt(formData.get('totalMedicamento'), 10) || 0,
+      };
+      setTransactions([newCierre, ...transactions]);
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -557,6 +578,15 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => {
+                      setModalType('cierre');
+                      setShowModal(true);
+                    }}
+                    className="bg-amber-500 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-600"
+                  >
+                    Cierre Inventario
+                  </button>
+                  <button
+                    onClick={() => {
                       setEditingMedId(selectedMedId);
                       setModalType('med-edit');
                       setShowModal(true);
@@ -602,19 +632,40 @@ const App = () => {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {recentTransactions.map((t) => (
-                    <tr key={t.id} className="hover:bg-slate-50/50">
-                      <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                    <tr
+                      key={t.id}
+                      className={`hover:bg-slate-50/50 ${
+                        t.isCierre
+                          ? t.cierreTurno === 'CIERRE 24 HORAS'
+                            ? 'bg-rose-50'
+                            : 'bg-amber-50'
+                          : ''
+                      }`}
+                    >
+                        <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                         <td className="px-6 py-4 text-center">
-                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                            {t.amount}
-                          </span>
+                          {t.isCierre ? (
+                            <span className="font-bold uppercase text-amber-700">Cierre</span>
+                          ) : (
+                            <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                              {t.amount}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4 font-medium text-slate-700 text-center">
-                          {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                          {t.isCierre ? (
+                            <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                          ) : (
+                            <>
+                              {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                            </>
+                          )}
                         </td>
                         <td className="px-6 py-4 text-center">
-                          {t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
+                          {t.isCierre ? (
+                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                          ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                             <button
                               type="button"
                               onClick={() => handleOpenRxUse(t)}
@@ -627,20 +678,24 @@ const App = () => {
                             <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{t.prescription || '---'}</td>
+                        <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
+                          {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                        </td>
                         <td className="px-6 py-4">
                           <div className="flex gap-2 justify-center">
-                            <button
-                              onClick={() => {
-                                setEditingTransactionId(t.id);
-                                setModalType('kardex-edit');
-                                setRxTypeValue(t.rxType || 'CERRADA');
-                                setShowModal(true);
-                              }}
-                              className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-                            >
-                              Editar
-                            </button>
+                            {!t.isCierre && (
+                              <button
+                                onClick={() => {
+                                  setEditingTransactionId(t.id);
+                                  setModalType('kardex-edit');
+                                  setRxTypeValue(t.rxType || 'CERRADA');
+                                  setShowModal(true);
+                                }}
+                                className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                              >
+                                Editar
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 const confirmDelete = window.confirm('Eliminar este movimiento?');
@@ -685,19 +740,40 @@ const App = () => {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {historicTransactions.map((t) => (
-                    <tr key={t.id} className="hover:bg-slate-50/50">
+                    <tr
+                      key={t.id}
+                      className={`hover:bg-slate-50/50 ${
+                        t.isCierre
+                          ? t.cierreTurno === 'CIERRE 24 HORAS'
+                            ? 'bg-rose-50'
+                            : 'bg-amber-50'
+                          : ''
+                      }`}
+                    >
                       <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                       <td className="px-6 py-4 text-center">
-                        <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                          {t.amount}
-                        </span>
+                        {t.isCierre ? (
+                          <span className="font-bold uppercase text-amber-700">Cierre</span>
+                        ) : (
+                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                            {t.amount}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 font-medium text-slate-700 text-center">
-                        {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                        {t.isCierre ? (
+                          <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                        ) : (
+                          <>
+                            {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                          </>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-center">
-                        {t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
+                        {t.isCierre ? (
+                          <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                        ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                           <button
                             type="button"
                             onClick={() => handleOpenRxUse(t)}
@@ -710,20 +786,24 @@ const App = () => {
                           <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{t.prescription || '---'}</td>
+                      <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
+                        {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2 justify-center">
-                          <button
-                            onClick={() => {
-                              setEditingTransactionId(t.id);
-                              setModalType('kardex-edit');
-                              setRxTypeValue(t.rxType || 'CERRADA');
-                              setShowModal(true);
-                            }}
-                            className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-                          >
-                            Editar
-                          </button>
+                          {!t.isCierre && (
+                            <button
+                              onClick={() => {
+                                setEditingTransactionId(t.id);
+                                setModalType('kardex-edit');
+                                setRxTypeValue(t.rxType || 'CERRADA');
+                                setShowModal(true);
+                              }}
+                              className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               const confirmDelete = window.confirm('Eliminar este movimiento?');
@@ -872,6 +952,8 @@ const App = () => {
                         ? 'Editar Expediente'
                         : modalType === 'bitacora'
                           ? 'Nuevo Registro de Bitacora'
+                        : modalType === 'cierre'
+                          ? 'Cierre de Inventario'
                         : modalType === 'med-edit'
                           ? 'Editar Medicamento'
                           : modalType === 'service-add'
@@ -963,6 +1045,19 @@ const App = () => {
                       defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
                     />
                   </div>
+                </>
+              ) : modalType === 'cierre' ? (
+                <>
+                  <SelectLabel
+                    label="Turno"
+                    name="turno"
+                    options={['SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
+                    <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
+                  </div>
+                  <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
                 </>
               ) : modalType === 'bitacora' ? (
                 <>
