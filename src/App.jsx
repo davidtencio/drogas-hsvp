@@ -49,6 +49,18 @@ const App = () => {
   const [condiciones, setCondiciones] = useState(INITIAL_CONDICIONES);
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
+  const formatCurrency = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '';
+    return num.toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const parseCurrency = (value) => {
+    if (value === null || value === undefined) return 0;
+    const cleaned = value.toString().replace(/\s/g, '');
+    const normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    const num = parseFloat(normalized);
+    return Number.isFinite(num) ? num : 0;
+  };
   const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
     const matches = items.filter(
       (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
@@ -351,7 +363,7 @@ const App = () => {
         id: newId,
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
-        unitPrice: parseFloat(formData.get('unitPrice')) || 0,
+        unitPrice: parseCurrency(formData.get('unitPrice')),
       };
       setMedications([newMed, ...medications]);
       setSelectedMedId(newId);
@@ -360,7 +372,7 @@ const App = () => {
         id: editingMedId,
         name: toUpper(formData.get('medName')),
         type: formData.get('medType'),
-        unitPrice: parseFloat(formData.get('unitPrice')) || 0,
+        unitPrice: parseCurrency(formData.get('unitPrice')),
       };
       setMedications(medications.map((m) => (m.id === editingMedId ? updated : m)));
     } else if (modalType === 'service-add') {
@@ -1309,9 +1321,20 @@ const App = () => {
                   <InputLabel
                     label="Precio Unitario (CRC)"
                     name="unitPrice"
-                    type="number"
-                    step="0.01"
-                    defaultValue={medications.find((m) => m.id === editingMedId)?.unitPrice ?? ''}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    defaultValue={formatCurrency(medications.find((m) => m.id === editingMedId)?.unitPrice ?? '')}
+                    onFocus={(e) => {
+                      const value = e.target.value;
+                      if (!value) return;
+                      e.target.value = value.replace(/\./g, '').replace(',', '.');
+                    }}
+                    onBlur={(e) => {
+                      const value = e.target.value;
+                      if (!value) return;
+                      e.target.value = formatCurrency(parseCurrency(value));
+                    }}
                   />
                 </>
               )}
