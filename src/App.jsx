@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
-  BrainCircuit,
   CheckCircle2,
   Clock,
   Database,
@@ -13,17 +12,12 @@ import {
   History,
   Package,
   PlusCircle,
-  Send,
   ShieldCheck,
-  Loader2,
 } from 'lucide-react';
 import { db, ensureAnonymousSignIn } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // --- CONFIGURACION ---
-const apiKey = '';
-const GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
-
 const INITIAL_MEDICATIONS = [
   { id: 'morf-15', name: 'MORFINA 15 MG', type: 'Estupefaciente' },
   { id: 'fent-50', name: 'FENTANYL 50 MCG', type: 'Estupefaciente' },
@@ -169,11 +163,6 @@ const App = () => {
   ]);
   const [bitacora, setBitacora] = useState([]);
 
-  // AI States
-  const [aiMessages, setAiMessages] = useState([
-    { role: 'assistant', text: 'Asistente PharmaAI activo. Desea un resumen del inventario o validar una dosis?' },
-  ]);
-  const [isTyping, setIsTyping] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [cloudReady, setCloudReady] = useState(false);
@@ -234,40 +223,6 @@ const App = () => {
     });
     return { recentTransactions: recent, historicTransactions: historic };
   }, [transactions, selectedMedId]);
-
-  // AI Logic
-  const handleAiChat = async (e) => {
-    e.preventDefault();
-    const input = e.target.elements.userInput.value;
-    if (!input.trim() || !apiKey) return;
-    const newMessages = [...aiMessages, { role: 'user', text: input }];
-    setAiMessages(newMessages);
-    e.target.reset();
-    setIsTyping(true);
-
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: input }] }],
-            systemInstruction: {
-              parts: [{ text: `Eres un asistente de farmacia hospitalaria. Inventario: ${currentInventory.map((m) => `${m.name}: ${m.stock}`).join(', ')}.` }],
-            },
-          }),
-        },
-      );
-      const data = await response.json();
-      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Error de respuesta.';
-      setAiMessages([...newMessages, { role: 'assistant', text: aiText }]);
-    } catch {
-      setAiMessages([...newMessages, { role: 'assistant', text: 'Error de conexion con IA.' }]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -405,7 +360,6 @@ const App = () => {
           <NavItem active={activeTab === 'kardex'} onClick={() => setActiveTab('kardex')} icon={<History size={18} />} label="Kardex Individual" />
           <NavItem active={activeTab === 'auditoria'} onClick={() => setActiveTab('auditoria')} icon={<ShieldCheck size={18} />} label="Revisiones" />
           <NavItem active={activeTab === 'bitacora'} onClick={() => setActiveTab('bitacora')} icon={<FileText size={18} />} label="Bitacora" />
-          <NavItem active={activeTab === 'ai'} onClick={() => setActiveTab('ai')} icon={<BrainCircuit size={18} />} label="Asistente AI" />
         </div>
 
         <div className="p-6 border-t border-slate-800">
@@ -432,7 +386,7 @@ const App = () => {
                     ? 'Auditoria de Expedientes'
                     : activeTab === 'bitacora'
                       ? 'Bitacora de Jornada'
-                      : 'Asistente Inteligente'}
+                      : 'Resumen Operativo'}
             </h2>
             <p className="text-slate-500 text-sm">Control centralizado y validacion farmacoterapeutica.</p>
           </div>
@@ -876,49 +830,6 @@ const App = () => {
           </div>
         )}
 
-        {activeTab === 'ai' && (
-          <div className="max-w-4xl mx-auto h-[600px] bg-white rounded-2xl border border-slate-200 shadow-lg flex flex-col overflow-hidden">
-            <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <BrainCircuit size={20} className="text-blue-400" />
-                <h3 className="font-bold tracking-tight">Asistente PharmaAI</h3>
-              </div>
-              <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-1 rounded font-bold uppercase">Sesion Segura</span>
-            </div>
-
-            <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50/30">
-              {aiMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[80%] p-4 rounded-xl text-sm leading-relaxed ${
-                      msg.role === 'user' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-700 border border-slate-200 shadow-sm'
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
-                </div>
-              ))}
-              {isTyping && (
-                <div className="flex justify-start">
-                  <div className="bg-white p-4 rounded-xl border border-slate-200">
-                    <Loader2 className="animate-spin text-blue-600" size={16} />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <form onSubmit={handleAiChat} className="p-4 bg-white border-t border-slate-200 flex gap-2">
-              <input
-                name="userInput"
-                placeholder="Escriba su consulta clinica o de inventario..."
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-              />
-              <button className="bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition-all shadow-sm">
-                <Send size={18} />
-              </button>
-            </form>
-          </div>
-        )}
       </main>
 
       {/* Simplified Modal */}
