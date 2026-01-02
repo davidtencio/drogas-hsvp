@@ -14,9 +14,15 @@ import {
   PlusCircle,
   ShieldCheck,
 } from 'lucide-react';
-import { auth, db } from './firebase';
+import { auth, db, googleProvider } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -112,6 +118,15 @@ const App = () => {
       }
     } catch {
       setAuthError('Credenciales invalidas o usuario existente.');
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    setAuthError('');
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch {
+      setAuthError('No se pudo iniciar con Google.');
     }
   };
 
@@ -1039,6 +1054,12 @@ const App = () => {
               <InputLabel label="Correo" name="authEmail" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} />
               <InputLabel label="Contrasena" name="authPassword" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
               {authError && <p className="text-xs font-bold text-rose-600">{authError}</p>}
+              <button
+                onClick={handleGoogleAuth}
+                className="w-full bg-white border border-slate-200 text-slate-700 py-3 rounded-lg font-bold text-xs shadow-sm hover:bg-slate-50 transition-all uppercase tracking-widest"
+              >
+                Google
+              </button>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleAuth('login')}
