@@ -416,6 +416,15 @@ const App = () => {
             </button>
             <button
               onClick={() => {
+                setModalType('service-manage');
+                setShowModal(true);
+              }}
+              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+            >
+              Eliminar Servicio
+            </button>
+            <button
+              onClick={() => {
                 setModalType('pharmacist-add');
                 setShowModal(true);
               }}
@@ -867,15 +876,17 @@ const App = () => {
                           ? 'Editar Medicamento'
                           : modalType === 'service-add'
                             ? 'Nuevo Servicio'
-                            : modalType === 'pharmacist-add'
-                              ? 'Nuevo Farmaceutico'
-                              : modalType === 'pharmacist-manage'
-                                ? 'Eliminar Farmaceutico'
-                                : modalType === 'condition-add'
-                                  ? 'Nueva Condicion'
-                                  : modalType === 'condition-manage'
-                                    ? 'Eliminar Condicion'
-                                    : 'Nuevo Medicamento'}
+                            : modalType === 'service-manage'
+                              ? 'Eliminar Servicio'
+                              : modalType === 'pharmacist-add'
+                                ? 'Nuevo Farmaceutico'
+                                : modalType === 'pharmacist-manage'
+                                  ? 'Eliminar Farmaceutico'
+                                  : modalType === 'condition-add'
+                                    ? 'Nueva Condicion'
+                                    : modalType === 'condition-manage'
+                                      ? 'Eliminar Condicion'
+                                      : 'Nuevo Medicamento'}
               </h3>
                   <button
                     onClick={() => {
@@ -894,7 +905,11 @@ const App = () => {
             </div>
 
             <form
-              onSubmit={modalType === 'pharmacist-manage' || modalType === 'condition-manage' ? (e) => e.preventDefault() : handleSave}
+              onSubmit={
+                modalType === 'pharmacist-manage' || modalType === 'condition-manage' || modalType === 'service-manage'
+                  ? (e) => e.preventDefault()
+                  : handleSave
+              }
               className="p-8 space-y-4"
             >
               {modalType === 'auditoria' || modalType === 'auditoria-edit' ? (
@@ -1059,6 +1074,31 @@ const App = () => {
                 <>
                   <InputLabel label="Nombre del Farmaceutico" name="pharmacistName" required />
                 </>
+              ) : modalType === 'service-manage' ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500">Eliminar un servicio no afecta el historial.</p>
+                  <div className="space-y-2">
+                    {services.map((name) => (
+                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-slate-700">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setServices(services.filter((s) => s !== name))}
+                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+                  >
+                    Cerrar
+                  </button>
+                </div>
               ) : modalType === 'condition-add' ? (
                 <>
                   <InputLabel label="Nombre de la Condicion" name="conditionName" required />
@@ -1129,7 +1169,7 @@ const App = () => {
                   />
                 </>
               )}
-              {modalType !== 'pharmacist-manage' && modalType !== 'condition-manage' && (
+              {modalType !== 'pharmacist-manage' && modalType !== 'condition-manage' && modalType !== 'service-manage' && (
                 <button
                   type="submit"
                   className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
