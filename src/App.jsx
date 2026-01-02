@@ -193,13 +193,17 @@ const App = () => {
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
 
   // Computations
+  const sortedMedications = useMemo(() => {
+    return [...medications].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }, [medications]);
+
   const currentInventory = useMemo(() => {
-    return medications.map((med) => {
+    return sortedMedications.map((med) => {
       const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
       const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
       return { ...med, stock };
     });
-  }, [transactions, medications]);
+  }, [transactions, sortedMedications]);
 
   const stats = useMemo(
     () => ({
@@ -570,7 +574,7 @@ const App = () => {
                   onChange={(e) => setSelectedMedId(e.target.value)}
                   className="bg-transparent border-0 font-bold text-slate-800 focus:ring-0 text-sm cursor-pointer"
                 >
-                  {medications.map((m) => (
+                  {sortedMedications.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>
@@ -1044,8 +1048,8 @@ const App = () => {
                   <SelectLabel
                     label="Medicamento"
                     name="medicamento"
-                    options={medications.map((m) => m.name)}
-                    defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.medicamento || medications[0]?.name}
+                    options={sortedMedications.map((m) => m.name)}
+                    defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.medicamento || sortedMedications[0]?.name}
                   />
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase">Dosis y Via</label>
@@ -1103,7 +1107,7 @@ const App = () => {
                   <SelectLabel
                     label="Medicamento"
                     name="medicationId"
-                    options={medications.map((m) => ({ value: m.id, label: m.name }))}
+                    options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
                     isObject
                     defaultValue={transactions.find((t) => t.id === editingTransactionId)?.medId || selectedMedId}
                   />
