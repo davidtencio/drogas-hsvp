@@ -911,7 +911,7 @@ const App = () => {
                     <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{e.receta || '---'}</td>
                     <td className="px-6 py-4 font-mono font-bold text-slate-700 text-center">{e.cedula}</td>
                     <td className="px-6 py-4 text-center">
-                      <p className="font-bold text-slate-800">{e.medicamento}</p>
+                      <p className="font-mono font-bold text-slate-800">{e.medicamento}</p>
                       <p className="text-[10px] text-slate-400">{e.dosis}</p>
                     </td>
                     <td className="px-6 py-4 text-center">
