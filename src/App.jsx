@@ -738,6 +738,7 @@ const App = () => {
                 <tr className="bg-slate-50 border-b border-slate-200">
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Cedula</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaco / Dosis</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Estado</th>
@@ -750,6 +751,7 @@ const App = () => {
                   <tr key={e.id} className="hover:bg-slate-50/50">
                     <td className="px-6 py-4 text-slate-500 text-center">{e.fecha}</td>
                     <td className="px-6 py-4 text-center text-xs font-bold text-slate-700">{e.servicio}</td>
+                    <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">{e.receta || '---'}</td>
                     <td className="px-6 py-4 font-mono font-bold text-slate-700 text-center">{e.cedula}</td>
                     <td className="px-6 py-4 text-center">
                       <p className="font-bold text-slate-800">{e.medicamento}</p>
