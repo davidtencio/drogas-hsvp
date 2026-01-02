@@ -40,6 +40,7 @@ const App = () => {
   const [editingTransactionId, setEditingTransactionId] = useState(null);
   const [editingExpedienteId, setEditingExpedienteId] = useState(null);
   const [prefillKardexType, setPrefillKardexType] = useState('');
+  const [isQuickIngreso, setIsQuickIngreso] = useState(false);
   const [services, setServices] = useState(INITIAL_SERVICES);
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
@@ -453,6 +454,7 @@ const App = () => {
               onClick={() => {
                 setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
                 setPrefillKardexType('');
+                setIsQuickIngreso(false);
                 setRxTypeValue('CERRADA');
                 setShowModal(true);
               }}
@@ -536,6 +538,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setPrefillKardexType('IN');
+                      setIsQuickIngreso(true);
                       setModalType('kardex');
                       setShowModal(true);
                     }}
@@ -874,17 +877,18 @@ const App = () => {
                                     ? 'Eliminar Condicion'
                                     : 'Nuevo Medicamento'}
               </h3>
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  setEditingMedId(null);
-                  setEditingTransactionId(null);
-                  setEditingExpedienteId(null);
-                  setPrefillKardexType('');
-                  setRxTypeValue('CERRADA');
-                }}
-                className="text-slate-400 hover:text-slate-600"
-              >
+                  <button
+                    onClick={() => {
+                      setShowModal(false);
+                      setEditingMedId(null);
+                      setEditingTransactionId(null);
+                      setEditingExpedienteId(null);
+                      setPrefillKardexType('');
+                      setIsQuickIngreso(false);
+                      setRxTypeValue('CERRADA');
+                    }}
+                    className="text-slate-400 hover:text-slate-600"
+                  >
                 x
               </button>
             </div>
@@ -968,70 +972,84 @@ const App = () => {
                     isObject
                     defaultValue={transactions.find((t) => t.id === editingTransactionId)?.medId || selectedMedId}
                   />
-                  <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel
-                      label="Tipo de Receta"
-                      name="rxType"
-                      options={[
-                        { value: 'CERRADA', label: 'Cerrada' },
-                        { value: 'ABIERTA', label: 'Abierta' },
-                      ]}
-                      isObject
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
-                      onChange={(e) => setRxTypeValue(e.target.value)}
-                    />
-                    {rxTypeValue === 'ABIERTA' ? (
+                  {isQuickIngreso ? (
+                    <div className="grid grid-cols-2 gap-4">
                       <InputLabel
-                        label="Cantidad Receta"
-                        name="rxQuantity"
+                        label="Cantidad"
+                        name="amount"
                         type="number"
                         required
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
                       />
-                    ) : (
-                      <div />
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel
-                      label="Tipo Movimiento"
-                      name="type"
-                      options={[{ value: 'OUT', label: 'Salida' }, { value: 'IN', label: 'Entrada' }]}
-                      isObject
-                      defaultValue={prefillKardexType || transactions.find((t) => t.id === editingTransactionId)?.type || 'OUT'}
-                    />
-                    <InputLabel
-                      label="Cantidad"
-                      name="amount"
-                      type="number"
-                      required
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel
-                      label="Servicio"
-                      name="service"
-                      options={services}
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.service || services[0]}
-                    />
-                    <InputLabel
-                      label="Cama"
-                      name="cama"
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.cama || ''}
-                    />
-                  </div>
-                  <InputLabel
-                    label="N Receta / Comprobante"
-                    name="prescription"
-                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
-                  />
-                  <SelectLabel
-                    label="Farmaceutico"
-                    name="pharmacist"
-                    options={pharmacists}
-                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
-                  />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <SelectLabel
+                          label="Tipo de Receta"
+                          name="rxType"
+                          options={[
+                            { value: 'CERRADA', label: 'Cerrada' },
+                            { value: 'ABIERTA', label: 'Abierta' },
+                          ]}
+                          isObject
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
+                          onChange={(e) => setRxTypeValue(e.target.value)}
+                        />
+                        {rxTypeValue === 'ABIERTA' ? (
+                          <InputLabel
+                            label="Cantidad Receta"
+                            name="rxQuantity"
+                            type="number"
+                            required
+                            defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
+                          />
+                        ) : (
+                          <div />
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <SelectLabel
+                          label="Tipo Movimiento"
+                          name="type"
+                          options={[{ value: 'OUT', label: 'Salida' }, { value: 'IN', label: 'Entrada' }]}
+                          isObject
+                          defaultValue={prefillKardexType || transactions.find((t) => t.id === editingTransactionId)?.type || 'OUT'}
+                        />
+                        <InputLabel
+                          label="Cantidad"
+                          name="amount"
+                          type="number"
+                          required
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <SelectLabel
+                          label="Servicio"
+                          name="service"
+                          options={services}
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.service || services[0]}
+                        />
+                        <InputLabel
+                          label="Cama"
+                          name="cama"
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.cama || ''}
+                        />
+                      </div>
+                      <InputLabel
+                        label="N Receta / Comprobante"
+                        name="prescription"
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
+                      />
+                      <SelectLabel
+                        label="Farmaceutico"
+                        name="pharmacist"
+                        options={pharmacists}
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
+                      />
+                    </>
+                  )}
                 </>
               ) : modalType === 'service-add' ? (
                 <>
