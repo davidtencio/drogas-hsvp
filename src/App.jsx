@@ -39,6 +39,7 @@ const App = () => {
   const [editingMedId, setEditingMedId] = useState(null);
   const [editingTransactionId, setEditingTransactionId] = useState(null);
   const [editingExpedienteId, setEditingExpedienteId] = useState(null);
+  const [prefillKardexType, setPrefillKardexType] = useState('');
   const [services, setServices] = useState(INITIAL_SERVICES);
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
@@ -451,6 +452,7 @@ const App = () => {
             <button
               onClick={() => {
                 setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
+                setPrefillKardexType('');
                 setRxTypeValue('CERRADA');
                 setShowModal(true);
               }}
@@ -530,6 +532,16 @@ const App = () => {
                     className="bg-slate-900 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800"
                   >
                     Nuevo Medicamento
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPrefillKardexType('IN');
+                      setModalType('kardex');
+                      setShowModal(true);
+                    }}
+                    className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-700"
+                  >
+                    Ingreso Rapido
                   </button>
                   <button
                     onClick={() => {
@@ -868,6 +880,7 @@ const App = () => {
                   setEditingMedId(null);
                   setEditingTransactionId(null);
                   setEditingExpedienteId(null);
+                  setPrefillKardexType('');
                   setRxTypeValue('CERRADA');
                 }}
                 className="text-slate-400 hover:text-slate-600"
@@ -985,7 +998,7 @@ const App = () => {
                       name="type"
                       options={[{ value: 'OUT', label: 'Salida' }, { value: 'IN', label: 'Entrada' }]}
                       isObject
-                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.type || 'OUT'}
+                      defaultValue={prefillKardexType || transactions.find((t) => t.id === editingTransactionId)?.type || 'OUT'}
                     />
                     <InputLabel
                       label="Cantidad"
