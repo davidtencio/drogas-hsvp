@@ -232,25 +232,25 @@ const App = () => {
     const now = new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16);
 
     if (modalType === 'kardex') {
-      const rxType = formData.get('rxType');
+      const rxType = isQuickIngreso ? 'CERRADA' : formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
       const medId = formData.get('medicationId');
-      const prescription = toUpper(formData.get('prescription'));
+      const prescription = isQuickIngreso ? '' : toUpper(formData.get('prescription'));
       const rxUsed =
         rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity) : 0;
       const newTransaction = {
         id: Date.now(),
         date: now,
         medId,
-        type: formData.get('type'),
+        type: isQuickIngreso ? 'IN' : formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
-        service: toUpper(formData.get('service')),
-        cama: toUpper(formData.get('cama')),
+        service: isQuickIngreso ? 'INVENTARIO' : toUpper(formData.get('service')),
+        cama: isQuickIngreso ? '' : toUpper(formData.get('cama')),
         prescription,
         rxType,
         rxQuantity,
         rxUsed,
-        pharmacist: toUpper(formData.get('pharmacist')),
+        pharmacist: isQuickIngreso ? toUpper(pharmacists[0] || '') : toUpper(formData.get('pharmacist')),
       };
       setTransactions([newTransaction, ...transactions]);
     } else if (modalType === 'kardex-edit') {
