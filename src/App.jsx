@@ -41,6 +41,7 @@ const App = () => {
   const [editingExpedienteId, setEditingExpedienteId] = useState(null);
   const [prefillKardexType, setPrefillKardexType] = useState('');
   const [isQuickIngreso, setIsQuickIngreso] = useState(false);
+  const [showCatalogMenu, setShowCatalogMenu] = useState(false);
   const [services, setServices] = useState(INITIAL_SERVICES);
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
@@ -426,65 +427,87 @@ const App = () => {
             >
               {cloudStatus}
             </span>
-            <button
-              onClick={() => {
-                setModalType('service-add');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Nuevo Servicio
-            </button>
-            <button
-              onClick={() => {
-                setModalType('service-manage');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Eliminar Servicio
-            </button>
-            <button
-              onClick={() => {
-                setModalType('pharmacist-add');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Nuevo Farmaceutico
-            </button>
-            <button
-              onClick={() => {
-                setModalType('condition-add');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Nueva Condicion
-            </button>
-            <button
-              onClick={() => {
-                setModalType('pharmacist-manage');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Eliminar Farmaceutico
-            </button>
-            <button
-              onClick={() => {
-                setModalType('condition-manage');
-                setShowModal(true);
-              }}
-              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-            >
-              Eliminar Condicion
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowCatalogMenu((prev) => !prev)}
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+              >
+                Catalogos
+              </button>
+              {showCatalogMenu && (
+                <div className="absolute right-0 mt-2 w-64 rounded-lg border border-slate-200 bg-white shadow-lg z-20">
+                  <div className="px-3 py-2 text-[10px] font-bold uppercase text-slate-400">Servicios</div>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('service-add');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Nuevo Servicio
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('service-manage');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Eliminar Servicio
+                  </button>
+                  <div className="px-3 py-2 text-[10px] font-bold uppercase text-slate-400 border-t border-slate-100">Farmaceuticos</div>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('pharmacist-add');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Nuevo Farmaceutico
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('pharmacist-manage');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Eliminar Farmaceutico
+                  </button>
+                  <div className="px-3 py-2 text-[10px] font-bold uppercase text-slate-400 border-t border-slate-100">Condiciones</div>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('condition-add');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Nueva Condicion
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCatalogMenu(false);
+                      setModalType('condition-manage');
+                      setShowModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Eliminar Condicion
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => {
                 setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
                 setPrefillKardexType('');
                 setIsQuickIngreso(false);
+                setShowCatalogMenu(false);
                 setRxTypeValue('CERRADA');
                 setShowModal(true);
               }}
@@ -570,6 +593,7 @@ const App = () => {
                       setPrefillKardexType('IN');
                       setIsQuickIngreso(true);
                       setModalType('kardex');
+                      setShowCatalogMenu(false);
                       setShowModal(true);
                     }}
                     className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-700"
@@ -579,6 +603,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setModalType('cierre');
+                      setShowCatalogMenu(false);
                       setShowModal(true);
                     }}
                     className="bg-amber-500 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-600"
