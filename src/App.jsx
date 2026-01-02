@@ -30,7 +30,7 @@ const INITIAL_MEDICATIONS = [
 const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UCI', 'CLINICA DEL DOLOR'];
 const INITIAL_PHARMACISTS = ['2492 ESTHER HERNANDEZ', '2488 VIVIANA ESQUIVEL', '3632 GINNETTE MONTERO', '4511 JEANNETTE SALAZAR'];
 const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
-const MED_TYPES = ['Estupefaciente', 'Psicotropico'];
+const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
