@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  FileText,
   Filter,
   History,
   Package,
@@ -107,6 +108,7 @@ const App = () => {
           if (data.pharmacists?.length) setPharmacists(data.pharmacists);
           if (data.condiciones?.length) setCondiciones(data.condiciones);
           if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
+          if (data.bitacora?.length) setBitacora(data.bitacora);
         }
       } catch {
         try {
@@ -118,6 +120,7 @@ const App = () => {
           if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
           if (stored.condiciones?.length) setCondiciones(stored.condiciones);
           if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
+          if (stored.bitacora?.length) setBitacora(stored.bitacora);
         } catch {
           localStorage.removeItem('pharmaControlData');
         }
@@ -164,6 +167,7 @@ const App = () => {
       farmaceutico: '2488 VIVIANA ESQUIVEL',
     },
   ]);
+  const [bitacora, setBitacora] = useState([]);
 
   // AI States
   const [aiMessages, setAiMessages] = useState([
@@ -178,6 +182,7 @@ const App = () => {
     const payload = {
       transactions,
       expedientes,
+      bitacora,
       medications,
       services,
       pharmacists,
@@ -193,7 +198,7 @@ const App = () => {
       })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
-  }, [transactions, expedientes, medications, services, pharmacists, condiciones, selectedMedId]);
+  }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
 
   // Computations
   const currentInventory = useMemo(() => {
@@ -338,6 +343,16 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
+    } else if (modalType === 'bitacora') {
+      const newEntry = {
+        id: Date.now(),
+        fecha: now,
+        servicio: toUpper(formData.get('servicio')),
+        titulo: toUpper(formData.get('titulo')),
+        detalle: toUpper(formData.get('detalle')),
+        responsable: toUpper(formData.get('responsable')),
+      };
+      setBitacora([newEntry, ...bitacora]);
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
@@ -389,6 +404,7 @@ const App = () => {
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<Activity size={18} />} label="Dashboard" />
           <NavItem active={activeTab === 'kardex'} onClick={() => setActiveTab('kardex')} icon={<History size={18} />} label="Kardex Individual" />
           <NavItem active={activeTab === 'auditoria'} onClick={() => setActiveTab('auditoria')} icon={<ShieldCheck size={18} />} label="Revisiones" />
+          <NavItem active={activeTab === 'bitacora'} onClick={() => setActiveTab('bitacora')} icon={<FileText size={18} />} label="Bitacora" />
           <NavItem active={activeTab === 'ai'} onClick={() => setActiveTab('ai')} icon={<BrainCircuit size={18} />} label="Asistente AI" />
         </div>
 
@@ -414,7 +430,9 @@ const App = () => {
                   ? 'Kardex de Sustancias Controladas'
                   : activeTab === 'auditoria'
                     ? 'Auditoria de Expedientes'
-                    : 'Asistente Inteligente'}
+                    : activeTab === 'bitacora'
+                      ? 'Bitacora de Jornada'
+                      : 'Asistente Inteligente'}
             </h2>
             <p className="text-slate-500 text-sm">Control centralizado y validacion farmacoterapeutica.</p>
           </div>
@@ -478,7 +496,7 @@ const App = () => {
             </button>
             <button
               onClick={() => {
-                setModalType(activeTab === 'auditoria' ? 'auditoria' : 'kardex');
+                setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
                 setRxTypeValue('CERRADA');
                 setShowModal(true);
               }}
@@ -823,6 +841,41 @@ const App = () => {
           </div>
         )}
 
+        {activeTab === 'bitacora' && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Situacion</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Responsable</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {bitacora.map((b) => (
+                  <tr key={b.id} className="hover:bg-slate-50/50">
+                    <td className="px-6 py-4 text-slate-500 text-center">{b.fecha}</td>
+                    <td className="px-6 py-4 text-center text-xs font-bold text-slate-700">{b.servicio}</td>
+                    <td className="px-6 py-4 text-center">
+                      <p className="font-bold text-slate-800">{b.titulo}</p>
+                      <p className="text-[10px] text-slate-400">{b.detalle}</p>
+                    </td>
+                    <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{b.responsable}</td>
+                  </tr>
+                ))}
+                {bitacora.length === 0 && (
+                  <tr>
+                    <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={4}>
+                      Sin registros en la bitacora.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {activeTab === 'ai' && (
           <div className="max-w-4xl mx-auto h-[600px] bg-white rounded-2xl border border-slate-200 shadow-lg flex flex-col overflow-hidden">
             <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
@@ -882,6 +935,8 @@ const App = () => {
                       ? 'Editar Movimiento'
                       : modalType === 'auditoria-edit'
                         ? 'Editar Expediente'
+                        : modalType === 'bitacora'
+                          ? 'Nuevo Registro de Bitacora'
                         : modalType === 'med-edit'
                           ? 'Editar Medicamento'
                           : modalType === 'service-add'
@@ -965,6 +1020,20 @@ const App = () => {
                       defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
                     />
                   </div>
+                </>
+              ) : modalType === 'bitacora' ? (
+                <>
+                  <SelectLabel label="Servicio" name="servicio" options={services} />
+                  <InputLabel label="Titulo" name="titulo" required />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Detalle</label>
+                    <textarea
+                      name="detalle"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-24"
+                      required
+                    ></textarea>
+                  </div>
+                  <SelectLabel label="Responsable" name="responsable" options={pharmacists} />
                 </>
               ) : modalType === 'kardex' || modalType === 'kardex-edit' ? (
                 <>
