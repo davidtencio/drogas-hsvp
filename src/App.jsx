@@ -401,9 +401,9 @@ const App = () => {
             <div className="bg-blue-600 p-2 rounded-lg">
               <Database size={20} />
             </div>
-            <h1 className="text-lg font-bold tracking-tight">PharmaControl</h1>
+            <h1 className="text-lg font-bold tracking-tight">Control de Drogas Hospitalizados</h1>
           </div>
-          <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest border-l border-blue-600 pl-2">Hospital San Vicente</p>
+          <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest border-l border-blue-600 pl-2">Servicio de Farmacia</p>
         </div>
 
         <div className="flex-1 px-4 space-y-1">
