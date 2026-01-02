@@ -43,6 +43,7 @@ const App = () => {
   const [selectedMedId, setSelectedMedId] = useState(INITIAL_MEDICATIONS[0].id);
   const [editingMedId, setEditingMedId] = useState(null);
   const [editingTransactionId, setEditingTransactionId] = useState(null);
+  const [editingExpedienteId, setEditingExpedienteId] = useState(null);
   const [services, setServices] = useState(INITIAL_SERVICES);
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
@@ -319,6 +320,20 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes([newExp, ...expedientes]);
+    } else if (modalType === 'auditoria-edit') {
+      const current = expedientes.find((e) => e.id === editingExpedienteId);
+      const updated = {
+        id: editingExpedienteId,
+        fecha: current?.fecha || now,
+        servicio: toUpper(formData.get('servicio')),
+        cedula: toUpper(formData.get('cedula')),
+        receta: toUpper(formData.get('receta')),
+        medicamento: toUpper(formData.get('medicamento')),
+        dosis: toUpper(formData.get('dosis')),
+        condicion: toUpper(formData.get('condicion')),
+        farmaceutico: toUpper(formData.get('farmaceutico')),
+      };
+      setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
@@ -345,6 +360,7 @@ const App = () => {
     setShowModal(false);
     setEditingMedId(null);
     setEditingTransactionId(null);
+    setEditingExpedienteId(null);
     setRxTypeValue('CERRADA');
   };
 
@@ -724,6 +740,7 @@ const App = () => {
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Cedula</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaco / Dosis</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Estado</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Acciones</th>
                   <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
                 </tr>
               </thead>
@@ -744,6 +761,30 @@ const App = () => {
                       >
                         {e.condicion}
                       </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex gap-2 justify-center">
+                        <button
+                          onClick={() => {
+                            setEditingExpedienteId(e.id);
+                            setModalType('auditoria-edit');
+                            setShowModal(true);
+                          }}
+                          className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => {
+                            const confirmDelete = window.confirm('Eliminar este expediente?');
+                            if (!confirmDelete) return;
+                            setExpedientes(expedientes.filter((exp) => exp.id !== e.id));
+                          }}
+                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{e.farmaceutico}</td>
                   </tr>
@@ -810,6 +851,8 @@ const App = () => {
                     ? 'Nuevo Registro de Kardex'
                     : modalType === 'kardex-edit'
                       ? 'Editar Movimiento'
+                      : modalType === 'auditoria-edit'
+                        ? 'Editar Expediente'
                       : modalType === 'med-edit'
                         ? 'Editar Medicamento'
                         : modalType === 'service-add'
@@ -825,6 +868,7 @@ const App = () => {
                   setShowModal(false);
                   setEditingMedId(null);
                   setEditingTransactionId(null);
+                  setEditingExpedienteId(null);
                   setRxTypeValue('CERRADA');
                 }}
                 className="text-slate-400 hover:text-slate-600"
@@ -834,25 +878,56 @@ const App = () => {
             </div>
 
             <form onSubmit={modalType === 'pharmacist-manage' ? (e) => e.preventDefault() : handleSave} className="p-8 space-y-4">
-              {modalType === 'auditoria' ? (
+              {modalType === 'auditoria' || modalType === 'auditoria-edit' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
-                    <InputLabel label="Cedula Paciente" name="cedula" required />
-                    <InputLabel label="N Receta" name="receta" required />
+                    <InputLabel
+                      label="Cedula Paciente"
+                      name="cedula"
+                      required
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.cedula || ''}
+                    />
+                    <InputLabel
+                      label="N Receta"
+                      name="receta"
+                      required
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.receta || ''}
+                    />
                   </div>
-                  <SelectLabel label="Servicio" name="servicio" options={services} />
-                  <SelectLabel label="Medicamento" name="medicamento" options={medications.map((m) => m.name)} />
+                  <SelectLabel
+                    label="Servicio"
+                    name="servicio"
+                    options={services}
+                    defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.servicio || services[0]}
+                  />
+                  <SelectLabel
+                    label="Medicamento"
+                    name="medicamento"
+                    options={medications.map((m) => m.name)}
+                    defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.medicamento || medications[0]?.name}
+                  />
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase">Dosis y Via</label>
                     <textarea
                       name="dosis"
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-20"
                       required
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.dosis || ''}
                     ></textarea>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel label="Condicion" name="condicion" options={CONDICIONES} />
-                    <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
+                    <SelectLabel
+                      label="Condicion"
+                      name="condicion"
+                      options={CONDICIONES}
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.condicion || CONDICIONES[0]}
+                    />
+                    <SelectLabel
+                      label="Farmaceutico"
+                      name="farmaceutico"
+                      options={pharmacists}
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
+                    />
                   </div>
                 </>
               ) : modalType === 'kardex' || modalType === 'kardex-edit' ? (
