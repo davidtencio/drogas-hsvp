@@ -198,10 +198,19 @@ const App = () => {
   }, [medications]);
 
   const currentInventory = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
     return sortedMedications.map((med) => {
       const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
       const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
-      return { ...med, stock };
+      const weeklyOut = medTransactions.reduce((acc, t) => {
+        if (t.type !== 'OUT') return acc;
+        const when = parseDateTime(t.date);
+        if (!when || when < cutoff) return acc;
+        return acc + t.amount;
+      }, 0);
+      const minRecommended = weeklyOut;
+      return { ...med, stock, weeklyOut, minRecommended };
     });
   }, [transactions, sortedMedications]);
 
@@ -554,6 +563,10 @@ const App = () => {
                     <div className="flex items-end gap-2">
                       <span className={`text-2xl font-bold ${med.stock < 15 ? 'text-rose-600' : 'text-slate-900'}`}>{med.stock}</span>
                       <span className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider">Unidades</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                      <span>Min recomendado</span>
+                      <span className="text-slate-700">{med.minRecommended}</span>
                     </div>
                   </div>
                 ))}
