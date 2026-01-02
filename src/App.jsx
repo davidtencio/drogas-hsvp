@@ -34,7 +34,7 @@ const INITIAL_MEDICATIONS = [
 
 const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UCI', 'CLINICA DEL DOLOR'];
 const INITIAL_PHARMACISTS = ['2492 ESTHER HERNANDEZ', '2488 VIVIANA ESQUIVEL', '3632 GINNETTE MONTERO', '4511 JEANNETTE SALAZAR'];
-const CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
+const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
 const MED_TYPES = ['Estupefaciente', 'Psicotropico'];
 
 const App = () => {
@@ -48,6 +48,7 @@ const App = () => {
   const [pharmacists, setPharmacists] = useState(INITIAL_PHARMACISTS);
   const [rxTypeValue, setRxTypeValue] = useState('CERRADA');
   const [cloudStatus, setCloudStatus] = useState('Sincronizando...');
+  const [condiciones, setCondiciones] = useState(INITIAL_CONDICIONES);
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
@@ -104,6 +105,7 @@ const App = () => {
           if (data.medications?.length) setMedications(data.medications);
           if (data.services?.length) setServices(data.services);
           if (data.pharmacists?.length) setPharmacists(data.pharmacists);
+          if (data.condiciones?.length) setCondiciones(data.condiciones);
           if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
         }
       } catch {
@@ -114,6 +116,7 @@ const App = () => {
           if (stored.medications?.length) setMedications(stored.medications);
           if (stored.services?.length) setServices(stored.services);
           if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
+          if (stored.condiciones?.length) setCondiciones(stored.condiciones);
           if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
         } catch {
           localStorage.removeItem('pharmaControlData');
@@ -178,6 +181,7 @@ const App = () => {
       medications,
       services,
       pharmacists,
+      condiciones,
       selectedMedId,
     };
     localStorage.setItem('pharmaControlData', JSON.stringify(payload));
@@ -189,7 +193,7 @@ const App = () => {
       })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
-  }, [transactions, expedientes, medications, services, pharmacists, selectedMedId]);
+  }, [transactions, expedientes, medications, services, pharmacists, condiciones, selectedMedId]);
 
   // Computations
   const currentInventory = useMemo(() => {
@@ -356,6 +360,9 @@ const App = () => {
     } else if (modalType === 'pharmacist-add') {
       const newPharmacist = toUpper(formData.get('pharmacistName'));
       setPharmacists([newPharmacist, ...pharmacists]);
+    } else if (modalType === 'condition-add') {
+      const newCondition = toUpper(formData.get('conditionName'));
+      setCondiciones([newCondition, ...condiciones]);
     }
     setShowModal(false);
     setEditingMedId(null);
@@ -444,12 +451,30 @@ const App = () => {
             </button>
             <button
               onClick={() => {
+                setModalType('condition-add');
+                setShowModal(true);
+              }}
+              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+            >
+              Nueva Condicion
+            </button>
+            <button
+              onClick={() => {
                 setModalType('pharmacist-manage');
                 setShowModal(true);
               }}
               className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
             >
               Eliminar Farmaceutico
+            </button>
+            <button
+              onClick={() => {
+                setModalType('condition-manage');
+                setShowModal(true);
+              }}
+              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+            >
+              Eliminar Condicion
             </button>
             <button
               onClick={() => {
@@ -857,15 +882,19 @@ const App = () => {
                       ? 'Editar Movimiento'
                       : modalType === 'auditoria-edit'
                         ? 'Editar Expediente'
-                      : modalType === 'med-edit'
-                        ? 'Editar Medicamento'
-                        : modalType === 'service-add'
-                          ? 'Nuevo Servicio'
-                          : modalType === 'pharmacist-add'
-                            ? 'Nuevo Farmaceutico'
-                            : modalType === 'pharmacist-manage'
-                              ? 'Eliminar Farmaceutico'
-                              : 'Nuevo Medicamento'}
+                        : modalType === 'med-edit'
+                          ? 'Editar Medicamento'
+                          : modalType === 'service-add'
+                            ? 'Nuevo Servicio'
+                            : modalType === 'pharmacist-add'
+                              ? 'Nuevo Farmaceutico'
+                              : modalType === 'pharmacist-manage'
+                                ? 'Eliminar Farmaceutico'
+                                : modalType === 'condition-add'
+                                  ? 'Nueva Condicion'
+                                  : modalType === 'condition-manage'
+                                    ? 'Eliminar Condicion'
+                                    : 'Nuevo Medicamento'}
               </h3>
               <button
                 onClick={() => {
@@ -881,7 +910,10 @@ const App = () => {
               </button>
             </div>
 
-            <form onSubmit={modalType === 'pharmacist-manage' ? (e) => e.preventDefault() : handleSave} className="p-8 space-y-4">
+            <form
+              onSubmit={modalType === 'pharmacist-manage' || modalType === 'condition-manage' ? (e) => e.preventDefault() : handleSave}
+              className="p-8 space-y-4"
+            >
               {modalType === 'auditoria' || modalType === 'auditoria-edit' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -923,8 +955,8 @@ const App = () => {
                     <SelectLabel
                       label="Condicion"
                       name="condicion"
-                      options={CONDICIONES}
-                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.condicion || CONDICIONES[0]}
+                      options={condiciones}
+                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.condicion || condiciones[0]}
                     />
                     <SelectLabel
                       label="Farmaceutico"
@@ -1016,6 +1048,10 @@ const App = () => {
                 <>
                   <InputLabel label="Nombre del Farmaceutico" name="pharmacistName" required />
                 </>
+              ) : modalType === 'condition-add' ? (
+                <>
+                  <InputLabel label="Nombre de la Condicion" name="conditionName" required />
+                </>
               ) : modalType === 'pharmacist-manage' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Eliminar un farmaceutico no afecta el historial de rebajos.</p>
@@ -1026,6 +1062,31 @@ const App = () => {
                         <button
                           type="button"
                           onClick={() => setPharmacists(pharmacists.filter((p) => p !== name))}
+                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              ) : modalType === 'condition-manage' ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500">Eliminar una condicion no afecta el historial.</p>
+                  <div className="space-y-2">
+                    {condiciones.map((name) => (
+                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-slate-700">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setCondiciones(condiciones.filter((c) => c !== name))}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
                           Eliminar
@@ -1057,7 +1118,7 @@ const App = () => {
                   />
                 </>
               )}
-              {modalType !== 'pharmacist-manage' && (
+              {modalType !== 'pharmacist-manage' && modalType !== 'condition-manage' && (
                 <button
                   type="submit"
                   className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
