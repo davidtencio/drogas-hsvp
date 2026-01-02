@@ -15,7 +15,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, setDoc, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -106,6 +106,29 @@ const App = () => {
       rxUsed: nextUsed,
     };
     setTransactions([newTransaction, ...transactions]);
+    persistSubDoc('transactions', newTransaction);
+  };
+
+  const persistSubDoc = async (collectionName, data) => {
+    if (!authUser) return;
+    setCloudStatus('Sincronizando...');
+    try {
+      await setDoc(doc(db, 'appState', authUser.uid, collectionName, String(data.id)), data, { merge: true });
+      setCloudStatus('Sincronizado');
+    } catch {
+      setCloudStatus('Sin conexion');
+    }
+  };
+
+  const removeSubDoc = async (collectionName, id) => {
+    if (!authUser) return;
+    setCloudStatus('Sincronizando...');
+    try {
+      await deleteDoc(doc(db, 'appState', authUser.uid, collectionName, String(id)));
+      setCloudStatus('Sincronizado');
+    } catch {
+      setCloudStatus('Sin conexion');
+    }
   };
 
   const handleAuth = async (mode) => {
@@ -144,21 +167,53 @@ const App = () => {
     if (!authUser) return;
     let cancelled = false;
     const hydrateFromCloud = async () => {
+      setCloudStatus('Sincronizando...');
       try {
         const ref = doc(db, 'appState', authUser.uid);
         const snap = await getDoc(ref);
         if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
-          if (data.transactions?.length) setTransactions(data.transactions);
-          if (data.expedientes?.length) setExpedientes(data.expedientes);
           if (data.medications?.length) setMedications(data.medications);
           if (data.services?.length) setServices(data.services);
           if (data.pharmacists?.length) setPharmacists(data.pharmacists);
           if (data.condiciones?.length) setCondiciones(data.condiciones);
           if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
-          if (data.bitacora?.length) setBitacora(data.bitacora);
+          if (data.transactions?.length || data.expedientes?.length || data.bitacora?.length) {
+            const batch = writeBatch(db);
+            data.transactions?.forEach((item) => {
+              const createdAt = item.createdAt ?? parseDateTime(item.date)?.getTime() ?? Date.now();
+              batch.set(doc(db, 'appState', authUser.uid, 'transactions', String(item.id)), { ...item, createdAt }, { merge: true });
+            });
+            data.expedientes?.forEach((item) => {
+              const createdAt = item.createdAt ?? parseDateTime(item.fecha)?.getTime() ?? Date.now();
+              batch.set(doc(db, 'appState', authUser.uid, 'expedientes', String(item.id)), { ...item, createdAt }, { merge: true });
+            });
+            data.bitacora?.forEach((item) => {
+              const createdAt = item.createdAt ?? parseDateTime(item.fecha)?.getTime() ?? Date.now();
+              batch.set(doc(db, 'appState', authUser.uid, 'bitacora', String(item.id)), { ...item, createdAt }, { merge: true });
+            });
+            await batch.commit();
+            await setDoc(
+              ref,
+              { transactions: deleteField(), expedientes: deleteField(), bitacora: deleteField() },
+              { merge: true },
+            );
+          }
         }
+
+        const loadCollection = async (name, setter) => {
+          const colRef = collection(db, 'appState', authUser.uid, name);
+          const q = query(colRef, orderBy('createdAt', 'desc'), limit(500));
+          const snap = await getDocs(q);
+          const items = snap.docs.map((d) => d.data());
+          setter(items);
+        };
+        await Promise.all([
+          loadCollection('transactions', setTransactions),
+          loadCollection('expedientes', setExpedientes),
+          loadCollection('bitacora', setBitacora),
+        ]);
       } catch {
         try {
           const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
@@ -223,7 +278,7 @@ const App = () => {
   const [cloudReady, setCloudReady] = useState(false);
 
   useEffect(() => {
-    const payload = {
+    const localPayload = {
       transactions,
       expedientes,
       bitacora,
@@ -233,10 +288,17 @@ const App = () => {
       condiciones,
       selectedMedId,
     };
-    localStorage.setItem('pharmaControlData', JSON.stringify(payload));
+    localStorage.setItem('pharmaControlData', JSON.stringify(localPayload));
     if (!cloudReady || !authUser) return;
+    const cloudPayload = {
+      medications,
+      services,
+      pharmacists,
+      condiciones,
+      selectedMedId,
+    };
     setCloudStatus('Sincronizando...');
-    setDoc(doc(db, 'appState', authUser.uid), payload, { merge: true })
+    setDoc(doc(db, 'appState', authUser.uid), cloudPayload, { merge: true })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
@@ -254,7 +316,7 @@ const App = () => {
       const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
       const weeklyOut = medTransactions.reduce((acc, t) => {
         if (t.type !== 'OUT') return acc;
-        const when = parseDateTime(t.date);
+        const when = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
         if (!when || when < cutoff) return acc;
         return acc + t.amount;
       }, 0);
@@ -279,7 +341,7 @@ const App = () => {
     const recent = [];
     const historic = [];
     medTransactions.forEach((t) => {
-      const when = parseDateTime(t.date);
+      const when = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
       if (when && when >= cutoff) {
         recent.push(t);
       } else {
@@ -304,6 +366,7 @@ const App = () => {
       const newTransaction = {
         id: Date.now(),
         date: now,
+        createdAt: Date.now(),
         medId,
         type: isQuickIngreso ? 'IN' : formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
@@ -316,6 +379,7 @@ const App = () => {
         pharmacist: isQuickIngreso ? toUpper(pharmacists[0] || '') : toUpper(formData.get('pharmacist')),
       };
       setTransactions([newTransaction, ...transactions]);
+      persistSubDoc('transactions', newTransaction);
     } else if (modalType === 'kardex-edit') {
       const current = transactions.find((t) => t.id === editingTransactionId);
       const rxType = formData.get('rxType');
@@ -324,6 +388,7 @@ const App = () => {
       const updated = {
         id: editingTransactionId,
         date: now,
+        createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId: formData.get('medicationId'),
         type: formData.get('type'),
         amount: parseInt(formData.get('amount'), 10),
@@ -336,10 +401,12 @@ const App = () => {
         pharmacist: toUpper(formData.get('pharmacist')),
       };
       setTransactions(transactions.map((t) => (t.id === editingTransactionId ? updated : t)));
+      persistSubDoc('transactions', updated);
     } else if (modalType === 'auditoria') {
       const newExp = {
         id: Date.now(),
         fecha: now,
+        createdAt: Date.now(),
         servicio: toUpper(formData.get('servicio')),
         cedula: toUpper(formData.get('cedula')),
         receta: toUpper(formData.get('receta')),
@@ -349,11 +416,13 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes([newExp, ...expedientes]);
+      persistSubDoc('expedientes', newExp);
     } else if (modalType === 'auditoria-edit') {
       const current = expedientes.find((e) => e.id === editingExpedienteId);
       const updated = {
         id: editingExpedienteId,
         fecha: current?.fecha || now,
+        createdAt: current?.createdAt ?? parseDateTime(current?.fecha || now)?.getTime() ?? Date.now(),
         servicio: toUpper(formData.get('servicio')),
         cedula: toUpper(formData.get('cedula')),
         receta: toUpper(formData.get('receta')),
@@ -363,11 +432,13 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
+      persistSubDoc('expedientes', updated);
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
       const newCierre = {
         id: Date.now(),
         date: now,
+        createdAt: Date.now(),
         medId: selectedMedId,
         type: 'IN',
         amount: 0,
@@ -384,16 +455,19 @@ const App = () => {
         totalMedicamento: parseInt(formData.get('totalMedicamento'), 10) || 0,
       };
       setTransactions([newCierre, ...transactions]);
+      persistSubDoc('transactions', newCierre);
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
         fecha: now,
+        createdAt: Date.now(),
         servicio: toUpper(formData.get('servicio')),
         titulo: toUpper(formData.get('titulo')),
         detalle: toUpper(formData.get('detalle')),
         responsable: toUpper(formData.get('responsable')),
       };
       setBitacora([newEntry, ...bitacora]);
+      persistSubDoc('bitacora', newEntry);
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
@@ -808,6 +882,7 @@ const App = () => {
                                 const confirmDelete = window.confirm('Eliminar este movimiento?');
                                 if (!confirmDelete) return;
                                 setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                removeSubDoc('transactions', t.id);
                               }}
                               className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                             >
@@ -916,6 +991,7 @@ const App = () => {
                               const confirmDelete = window.confirm('Eliminar este movimiento?');
                               if (!confirmDelete) return;
                               setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                              removeSubDoc('transactions', t.id);
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
@@ -991,6 +1067,7 @@ const App = () => {
                             const confirmDelete = window.confirm('Eliminar este expediente?');
                             if (!confirmDelete) return;
                             setExpedientes(expedientes.filter((exp) => exp.id !== e.id));
+                            removeSubDoc('expedientes', e.id);
                           }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
