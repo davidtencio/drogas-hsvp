@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /appState/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+      match /{subcollection=**}/{docId} {
+        allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /orgData/{orgId} {
+      // NOTE: Replace this with an org membership check when available.
+      allow read, write: if signedIn();
+      match /{subcollection=**}/{docId} {
+        allow read, write: if signedIn();
+      }
+    }
+  }
+}
