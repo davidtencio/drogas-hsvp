@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -59,6 +59,8 @@ const App = () => {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const pendingWritesRef = useRef([]);
+  const isFlushingRef = useRef(false);
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const formatCurrency = (value) => {
@@ -106,28 +108,38 @@ const App = () => {
       rxUsed: nextUsed,
     };
     setTransactions([newTransaction, ...transactions]);
-    persistSubDoc('transactions', newTransaction);
+    enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
   };
 
-  const persistSubDoc = async (collectionName, data) => {
+  const enqueueWrite = (action) => {
+    const next = [...(pendingWritesRef.current || []), action];
+    pendingWritesRef.current = next;
+    localStorage.setItem('pharmaPendingWrites', JSON.stringify(next));
     if (!authUser) return;
+    flushWriteQueue();
+  };
+
+  const flushWriteQueue = async () => {
+    if (isFlushingRef.current || !authUser) return;
+    const queue = pendingWritesRef.current || [];
+    if (queue.length === 0) return;
+    isFlushingRef.current = true;
     setCloudStatus('Sincronizando...');
     try {
-      await setDoc(doc(db, 'appState', authUser.uid, collectionName, String(data.id)), data, { merge: true });
+      for (const action of queue) {
+        if (action.type === 'set') {
+          await setDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)), action.data, { merge: true });
+        } else if (action.type === 'delete') {
+          await deleteDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)));
+        }
+      }
+      pendingWritesRef.current = [];
+      localStorage.removeItem('pharmaPendingWrites');
       setCloudStatus('Sincronizado');
     } catch {
       setCloudStatus('Sin conexion');
-    }
-  };
-
-  const removeSubDoc = async (collectionName, id) => {
-    if (!authUser) return;
-    setCloudStatus('Sincronizando...');
-    try {
-      await deleteDoc(doc(db, 'appState', authUser.uid, collectionName, String(id)));
-      setCloudStatus('Sincronizado');
-    } catch {
-      setCloudStatus('Sin conexion');
+    } finally {
+      isFlushingRef.current = false;
     }
   };
 
@@ -162,6 +174,25 @@ const App = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('pharmaPendingWrites') || '[]');
+      if (Array.isArray(stored)) {
+        pendingWritesRef.current = stored;
+      }
+    } catch {
+      pendingWritesRef.current = [];
+      localStorage.removeItem('pharmaPendingWrites');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (pendingWritesRef.current.length > 0) {
+      flushWriteQueue();
+    }
+  }, [authUser]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -388,7 +419,7 @@ const App = () => {
         pharmacist: isQuickIngreso ? toUpper(pharmacists[0] || '') : toUpper(formData.get('pharmacist')),
       };
       setTransactions([newTransaction, ...transactions]);
-      persistSubDoc('transactions', newTransaction);
+      enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
     } else if (modalType === 'kardex-edit') {
       const current = transactions.find((t) => t.id === editingTransactionId);
       const rxType = formData.get('rxType');
@@ -410,7 +441,7 @@ const App = () => {
         pharmacist: toUpper(formData.get('pharmacist')),
       };
       setTransactions(transactions.map((t) => (t.id === editingTransactionId ? updated : t)));
-      persistSubDoc('transactions', updated);
+      enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
     } else if (modalType === 'auditoria') {
       const newExp = {
         id: Date.now(),
@@ -425,7 +456,7 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes([newExp, ...expedientes]);
-      persistSubDoc('expedientes', newExp);
+      enqueueWrite({ type: 'set', collection: 'expedientes', id: newExp.id, data: newExp });
     } else if (modalType === 'auditoria-edit') {
       const current = expedientes.find((e) => e.id === editingExpedienteId);
       const updated = {
@@ -441,7 +472,7 @@ const App = () => {
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
-      persistSubDoc('expedientes', updated);
+      enqueueWrite({ type: 'set', collection: 'expedientes', id: updated.id, data: updated });
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
       const newCierre = {
@@ -464,7 +495,7 @@ const App = () => {
         totalMedicamento: parseInt(formData.get('totalMedicamento'), 10) || 0,
       };
       setTransactions([newCierre, ...transactions]);
-      persistSubDoc('transactions', newCierre);
+      enqueueWrite({ type: 'set', collection: 'transactions', id: newCierre.id, data: newCierre });
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -476,7 +507,7 @@ const App = () => {
         responsable: toUpper(formData.get('responsable')),
       };
       setBitacora([newEntry, ...bitacora]);
-      persistSubDoc('bitacora', newEntry);
+      enqueueWrite({ type: 'set', collection: 'bitacora', id: newEntry.id, data: newEntry });
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
@@ -900,7 +931,7 @@ const App = () => {
                                 const confirmDelete = window.confirm('Eliminar este movimiento?');
                                 if (!confirmDelete) return;
                                 setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                removeSubDoc('transactions', t.id);
+                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
                               }}
                               className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                             >
@@ -1010,7 +1041,7 @@ const App = () => {
                               const confirmDelete = window.confirm('Eliminar este movimiento?');
                               if (!confirmDelete) return;
                               setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                              removeSubDoc('transactions', t.id);
+                              enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
@@ -1087,7 +1118,7 @@ const App = () => {
                             const confirmDelete = window.confirm('Eliminar este expediente?');
                             if (!confirmDelete) return;
                             setExpedientes(expedientes.filter((exp) => exp.id !== e.id));
-                            removeSubDoc('expedientes', e.id);
+                            enqueueWrite({ type: 'delete', collection: 'expedientes', id: e.id });
                           }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
