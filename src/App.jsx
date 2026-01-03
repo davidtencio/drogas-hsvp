@@ -70,7 +70,8 @@ const App = () => {
   const retryTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
   const createdAtBackfillRef = useRef({});
-  const dataDocPath = authUser?.email ? `orgData/${authUser.email.split('@')[0]}` : `appState/${authUser?.uid || 'anon'}`;
+  const ORG_ID = 'hsvp';
+  const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const formatCurrency = (value) => {
