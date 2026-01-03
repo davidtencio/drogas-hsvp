@@ -65,6 +65,7 @@ const App = () => {
   const [syncErrors, setSyncErrors] = useState([]);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [partialLoad, setPartialLoad] = useState(false);
+  const [showHistoric, setShowHistoric] = useState(false);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -1160,105 +1161,111 @@ const App = () => {
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <h3 className="font-bold text-slate-700 text-sm">Historico (anteriores a 7 dias)</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowHistoric((prev) => !prev)}
+                  className="text-xs font-bold text-blue-600 uppercase tracking-wider"
+                >
+                  {showHistoric ? 'Ocultar' : 'Mostrar'}
+                </button>
               </div>
-              <table className="w-full text-left text-sm border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Acciones</th>
-                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {historicTransactions.map((t) => (
-                    <tr
-                      key={t.id}
-                      className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}
-                    >
-                      <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
-                      <td className="px-6 py-4 text-center">
-                        {t.isCierre ? (
-                          <span className="font-bold uppercase text-amber-700">Cierre</span>
-                        ) : (
-                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                            {t.amount}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 font-medium text-slate-700 text-center">
-                        {t.isCierre ? (
-                          <span className="font-bold text-slate-700">{t.cierreTurno}</span>
-                        ) : (
-                          <>
-                            {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
-                          </>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        {t.isCierre ? (
-                          <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
-                        ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenRxUse(t)}
-                            className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
-                            title="Registrar nuevo rebajo"
-                          >
-                            {t.rxUsed || 0} de {t.rxQuantity}
-                          </button>
-                        ) : (
-                          <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
-                        {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2 justify-center">
-                          {!t.isCierre && (
+              {showHistoric && (
+                <table className="w-full text-left text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Acciones</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Farmaceutico</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {historicTransactions.map((t) => (
+                      <tr key={t.id} className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}>
+                        <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                        <td className="px-6 py-4 text-center">
+                          {t.isCierre ? (
+                            <span className="font-bold uppercase text-amber-700">Cierre</span>
+                          ) : (
+                            <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                              {t.amount}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-medium text-slate-700 text-center">
+                          {t.isCierre ? (
+                            <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                          ) : (
+                            <>
+                              {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                            </>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          {t.isCierre ? (
+                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                          ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRxUse(t)}
+                              className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                              title="Registrar nuevo rebajo"
+                            >
+                              {t.rxUsed || 0} de {t.rxQuantity}
+                            </button>
+                          ) : (
+                            <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
+                          {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex gap-2 justify-center">
+                            {!t.isCierre && (
+                              <button
+                                onClick={() => {
+                                  setEditingTransactionId(t.id);
+                                  setModalType('kardex-edit');
+                                  setRxTypeValue(t.rxType || 'CERRADA');
+                                  setIsQuickIngreso(false);
+                                  setShowModal(true);
+                                }}
+                                className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                              >
+                                Editar
+                              </button>
+                            )}
                             <button
                               onClick={() => {
-                                setEditingTransactionId(t.id);
-                                setModalType('kardex-edit');
-                                setRxTypeValue(t.rxType || 'CERRADA');
-                                setIsQuickIngreso(false);
-                                setShowModal(true);
+                                const confirmDelete = window.confirm('Eliminar este movimiento?');
+                                if (!confirmDelete) return;
+                                setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
                               }}
-                              className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+                              className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                             >
-                              Editar
+                              Eliminar
                             </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              const confirmDelete = window.confirm('Eliminar este movimiento?');
-                              if (!confirmDelete) return;
-                              setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                              enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
-                            }}
-                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
-                    </tr>
-                  ))}
-                  {historicTransactions.length === 0 && (
-                    <tr>
-                      <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
-                        Sin historico anterior.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                      </tr>
+                    ))}
+                    {historicTransactions.length === 0 && (
+                      <tr>
+                        <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
+                          Sin historico anterior.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}
