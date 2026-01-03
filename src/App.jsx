@@ -75,6 +75,10 @@ const App = () => {
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
+  const toCatalogId = (value) =>
+    toUpper(value)
+      .replace(/[\\/]/g, '-')
+      .replace(/\s+/g, '_');
   const formatCurrency = (value) => {
     const num = Number(value);
     if (!Number.isFinite(num)) return '';
@@ -271,13 +275,16 @@ const App = () => {
       try {
         const ref = doc(db, dataDocPath);
         const snap = await getDoc(ref);
+        let legacyServices = null;
+        let legacyPharmacists = null;
+        let legacyCondiciones = null;
         if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
           if (data.medications?.length) setMedications(data.medications);
-          if (data.services?.length) setServices(data.services);
-          if (data.pharmacists?.length) setPharmacists(data.pharmacists);
-          if (data.condiciones?.length) setCondiciones(data.condiciones);
+          if (data.services?.length) legacyServices = data.services;
+          if (data.pharmacists?.length) legacyPharmacists = data.pharmacists;
+          if (data.condiciones?.length) legacyCondiciones = data.condiciones;
           if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
           if (data.transactions?.length || data.expedientes?.length || data.bitacora?.length) {
             const batch = writeBatch(db);
@@ -301,6 +308,42 @@ const App = () => {
             );
           }
         }
+
+        const loadCatalogCollection = async (name, setter, legacyList) => {
+          const colRef = collection(db, dataDocPath, name);
+          const snap = await getDocs(colRef);
+          if (snap.empty) {
+            if (legacyList?.length) {
+              const batch = writeBatch(db);
+              legacyList.forEach((item) => {
+                const normalized = toUpper(item);
+                if (!normalized) return;
+                const id = toCatalogId(normalized);
+                batch.set(
+                  doc(db, dataDocPath, name, id),
+                  { id, name: normalized, createdAt: Date.now() },
+                  { merge: true },
+                );
+              });
+              await batch.commit();
+              setter(
+                legacyList
+                  .map((item) => toUpper(item))
+                  .filter(Boolean)
+                  .sort((a, b) => a.localeCompare(b, 'es')),
+              );
+              return true;
+            }
+            return false;
+          }
+          const items = snap.docs
+            .map((docSnap) => docSnap.data().name || docSnap.id)
+            .map((item) => toUpper(item))
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'es'));
+          setter(items);
+          return false;
+        };
 
         const loadCollection = async (name, setter, dateField) => {
           const colRef = collection(db, dataDocPath, name);
@@ -377,6 +420,18 @@ const App = () => {
           loadCollection('expedientes', setExpedientes, 'fecha'),
           loadCollection('bitacora', setBitacora, 'fecha'),
         ]);
+        const [servicesMigrated, pharmacistsMigrated, condicionesMigrated] = await Promise.all([
+          loadCatalogCollection('catalog_services', setServices, legacyServices),
+          loadCatalogCollection('catalog_pharmacists', setPharmacists, legacyPharmacists),
+          loadCatalogCollection('catalog_condiciones', setCondiciones, legacyCondiciones),
+        ]);
+        if (servicesMigrated || pharmacistsMigrated || condicionesMigrated) {
+          await setDoc(
+            ref,
+            { services: deleteField(), pharmacists: deleteField(), condiciones: deleteField() },
+            { merge: true },
+          );
+        }
         const anyFallback =
           transactionsLoaded.usedFallback || expedientesLoaded.usedFallback || bitacoraLoaded.usedFallback;
         const anyError = transactionsLoaded.hadError || expedientesLoaded.hadError || bitacoraLoaded.hadError;
@@ -465,9 +520,6 @@ const App = () => {
     if (!cloudReady || !authUser) return;
     const cloudPayload = {
       medications,
-      services,
-      pharmacists,
-      condiciones,
       selectedMedId,
     };
     setCloudStatus('Sincronizando...');
@@ -663,13 +715,34 @@ const App = () => {
       setMedications(medications.map((m) => (m.id === editingMedId ? updated : m)));
     } else if (modalType === 'service-add') {
       const newService = toUpper(formData.get('serviceName'));
-      setServices([newService, ...services]);
+      const nextServices = [newService, ...services.filter((s) => s !== newService)];
+      setServices(nextServices);
+      enqueueWrite({
+        type: 'set',
+        collection: 'catalog_services',
+        id: toCatalogId(newService),
+        data: { id: toCatalogId(newService), name: newService, createdAt: Date.now() },
+      });
     } else if (modalType === 'pharmacist-add') {
       const newPharmacist = toUpper(formData.get('pharmacistName'));
-      setPharmacists([newPharmacist, ...pharmacists]);
+      const nextPharmacists = [newPharmacist, ...pharmacists.filter((p) => p !== newPharmacist)];
+      setPharmacists(nextPharmacists);
+      enqueueWrite({
+        type: 'set',
+        collection: 'catalog_pharmacists',
+        id: toCatalogId(newPharmacist),
+        data: { id: toCatalogId(newPharmacist), name: newPharmacist, createdAt: Date.now() },
+      });
     } else if (modalType === 'condition-add') {
       const newCondition = toUpper(formData.get('conditionName'));
-      setCondiciones([newCondition, ...condiciones]);
+      const nextCondiciones = [newCondition, ...condiciones.filter((c) => c !== newCondition)];
+      setCondiciones(nextCondiciones);
+      enqueueWrite({
+        type: 'set',
+        collection: 'catalog_condiciones',
+        id: toCatalogId(newCondition),
+        data: { id: toCatalogId(newCondition), name: newCondition, createdAt: Date.now() },
+      });
     }
     setShowModal(false);
     setEditingMedId(null);
@@ -1692,7 +1765,10 @@ const App = () => {
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
-                          onClick={() => setServices(services.filter((s) => s !== name))}
+                          onClick={() => {
+                            setServices(services.filter((s) => s !== name));
+                            enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
+                          }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
                           Eliminar
@@ -1721,7 +1797,10 @@ const App = () => {
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
-                          onClick={() => setPharmacists(pharmacists.filter((p) => p !== name))}
+                          onClick={() => {
+                            setPharmacists(pharmacists.filter((p) => p !== name));
+                            enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
+                          }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
                           Eliminar
@@ -1746,7 +1825,10 @@ const App = () => {
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
-                          onClick={() => setCondiciones(condiciones.filter((c) => c !== name))}
+                          onClick={() => {
+                            setCondiciones(condiciones.filter((c) => c !== name));
+                            enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
+                          }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
                           Eliminar
