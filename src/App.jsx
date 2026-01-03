@@ -676,6 +676,16 @@ const App = () => {
     setRxTypeValue('CERRADA');
   };
 
+  const getKardexRowClass = (t) => {
+    if (t.isCierre) {
+      return t.cierreTurno === 'CIERRE 24 HORAS' ? 'bg-rose-50' : 'bg-amber-50';
+    }
+    if (t.type === 'IN' && t.service === 'INGRESO A INVENTARIO') {
+      return 'bg-emerald-50';
+    }
+    return '';
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans text-slate-900 overflow-hidden">
       {/* Sidebar - Clean & Professional */}
@@ -1062,15 +1072,7 @@ const App = () => {
                   {recentTransactions.map((t) => (
                     <tr
                       key={t.id}
-                      className={`hover:bg-slate-50/50 ${
-                        t.isCierre
-                          ? t.cierreTurno === 'CIERRE 24 HORAS'
-                            ? 'bg-rose-50'
-                            : 'bg-amber-50'
-                          : t.type === 'IN' && t.service === 'INGRESO A INVENTARIO'
-                            ? 'bg-emerald-50'
-                            : ''
-                      }`}
+                      className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}
                     >
                         <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                         <td className="px-6 py-4 text-center">
@@ -1174,15 +1176,7 @@ const App = () => {
                   {historicTransactions.map((t) => (
                     <tr
                       key={t.id}
-                      className={`hover:bg-slate-50/50 ${
-                        t.isCierre
-                          ? t.cierreTurno === 'CIERRE 24 HORAS'
-                            ? 'bg-rose-50'
-                            : 'bg-amber-50'
-                          : t.type === 'IN' && t.service === 'INGRESO A INVENTARIO'
-                            ? 'bg-emerald-50'
-                            : ''
-                      }`}
+                      className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}
                     >
                       <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                       <td className="px-6 py-4 text-center">
