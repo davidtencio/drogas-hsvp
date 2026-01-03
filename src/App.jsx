@@ -59,6 +59,7 @@ const App = () => {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
 
@@ -115,6 +116,7 @@ const App = () => {
     const next = [...(pendingWritesRef.current || []), action];
     pendingWritesRef.current = next;
     localStorage.setItem('pharmaPendingWrites', JSON.stringify(next));
+    setPendingCount(next.length);
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -135,6 +137,7 @@ const App = () => {
       }
       pendingWritesRef.current = [];
       localStorage.removeItem('pharmaPendingWrites');
+      setPendingCount(0);
       setCloudStatus('Sincronizado');
     } catch {
       setCloudStatus('Sin conexion');
@@ -180,6 +183,7 @@ const App = () => {
       const stored = JSON.parse(localStorage.getItem('pharmaPendingWrites') || '[]');
       if (Array.isArray(stored)) {
         pendingWritesRef.current = stored;
+        setPendingCount(stored.length);
       }
     } catch {
       pendingWritesRef.current = [];
@@ -607,6 +611,19 @@ const App = () => {
             >
               {cloudStatus}
             </span>
+            {pendingCount > 0 && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700">
+                Pendientes: {pendingCount}
+              </span>
+            )}
+            {pendingCount > 0 && (
+              <button
+                onClick={flushWriteQueue}
+                className="bg-amber-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-700"
+              >
+                Reintentar
+              </button>
+            )}
             {authUser && (
               <button
                 onClick={() => signOut(auth)}
