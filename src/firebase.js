@@ -4,13 +4,13 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyCWpDWiQLOUuqDjLpY_ea8n2K8s2HcbwlY',
-  authDomain: 'drogas-hsvp.firebaseapp.com',
-  projectId: 'drogas-hsvp',
-  storageBucket: 'drogas-hsvp.firebasestorage.app',
-  messagingSenderId: '550785141924',
-  appId: '1:550785141924:web:0ff08da69a056d60186a31',
-  measurementId: 'G-NFVFVGSXYZ',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
