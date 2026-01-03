@@ -48,6 +48,7 @@ jobs:
           fi
       - run: npm ci
       - run: npm run build
+      - run: node scripts/inject-firebase-config.mjs
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
