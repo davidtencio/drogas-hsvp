@@ -549,7 +549,7 @@ const App = () => {
         rxType,
         rxQuantity,
         rxUsed,
-        pharmacist: isQuickIngreso ? toUpper(pharmacists[0] || '') : toUpper(formData.get('pharmacist')),
+        pharmacist: toUpper(formData.get('pharmacist') || pharmacists[0] || ''),
       };
       setTransactions([newTransaction, ...transactions]);
       enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
@@ -1572,15 +1572,24 @@ const App = () => {
                     defaultValue={transactions.find((t) => t.id === editingTransactionId)?.medId || selectedMedId}
                   />
                   {isQuickIngreso ? (
-                    <div className="grid grid-cols-2 gap-4">
-                      <InputLabel
-                        label="Cantidad"
-                        name="amount"
-                        type="number"
-                        required
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <InputLabel
+                          label="Cantidad"
+                          name="amount"
+                          type="number"
+                          required
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                        />
+                        <div />
+                      </div>
+                      <SelectLabel
+                        label="Farmaceutico"
+                        name="pharmacist"
+                        options={pharmacists}
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
                       />
-                    </div>
+                    </>
                   ) : (
                     <>
                       <div className="grid grid-cols-2 gap-4">
