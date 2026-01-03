@@ -15,7 +15,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, setDoc, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -204,10 +204,19 @@ const App = () => {
 
         const loadCollection = async (name, setter) => {
           const colRef = collection(db, 'appState', authUser.uid, name);
-          const q = query(colRef, orderBy('createdAt', 'desc'), limit(500));
-          const snap = await getDocs(q);
-          const items = snap.docs.map((d) => d.data());
-          setter(items);
+          const items = [];
+          let lastDoc = null;
+          while (items.length < 8000) {
+            const q = lastDoc
+              ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
+              : query(colRef, orderBy('createdAt', 'desc'), limit(500));
+            const snap = await getDocs(q);
+            if (snap.empty) break;
+            items.push(...snap.docs.map((d) => d.data()));
+            lastDoc = snap.docs[snap.docs.length - 1];
+            if (snap.docs.length < 500) break;
+          }
+          setter(items.slice(0, 8000));
         };
         await Promise.all([
           loadCollection('transactions', setTransactions),
