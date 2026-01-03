@@ -62,6 +62,7 @@ const App = () => {
   const [pendingCount, setPendingCount] = useState(0);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [syncError, setSyncError] = useState('');
+  const [syncErrors, setSyncErrors] = useState([]);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -135,6 +136,7 @@ const App = () => {
     setCloudStatus('Sincronizando...');
     try {
       const remaining = [];
+      const errors = [];
       for (const action of queue) {
         try {
           if (action.type === 'set') {
@@ -144,6 +146,12 @@ const App = () => {
           }
         } catch {
           remaining.push(action);
+          errors.push({
+            id: action.id,
+            collection: action.collection,
+            type: action.type,
+            time: new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16),
+          });
         }
       }
       pendingWritesRef.current = remaining;
@@ -154,9 +162,11 @@ const App = () => {
         setCloudStatus('Sincronizado');
         setSyncError('');
         retryCountRef.current = 0;
+        setSyncErrors([]);
       } else {
         setCloudStatus('Sin conexion');
         setSyncError('Algunos registros no pudieron sincronizarse.');
+        setSyncErrors((prev) => [...errors, ...prev].slice(0, 50));
         if (!retryTimeoutRef.current) {
           const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
           retryTimeoutRef.current = setTimeout(() => {
@@ -694,6 +704,14 @@ const App = () => {
                 {syncError}
               </span>
             )}
+            {syncErrors.length > 0 && (
+              <button
+                onClick={() => setModalType('sync-log')}
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+              >
+                Ver Log
+              </button>
+            )}
             {authUser && (
               <button
                 onClick={async () => {
@@ -707,6 +725,7 @@ const App = () => {
                   setCondiciones(INITIAL_CONDICIONES);
                   setSelectedMedId(INITIAL_MEDICATIONS[0].id);
                   setPendingCount(0);
+                  setSyncErrors([]);
                   pendingWritesRef.current = [];
                   isFlushingRef.current = false;
                   if (retryTimeoutRef.current) {
@@ -1340,6 +1359,8 @@ const App = () => {
                           ? 'Nuevo Registro de Bitacora'
                         : modalType === 'cierre'
                           ? 'Cierre de Inventario'
+                        : modalType === 'sync-log'
+                          ? 'Log de Sincronizacion'
                         : modalType === 'med-edit'
                           ? 'Editar Medicamento'
                           : modalType === 'service-add'
@@ -1374,7 +1395,10 @@ const App = () => {
 
             <form
               onSubmit={
-                modalType === 'pharmacist-manage' || modalType === 'condition-manage' || modalType === 'service-manage'
+                modalType === 'pharmacist-manage' ||
+                modalType === 'condition-manage' ||
+                modalType === 'service-manage' ||
+                modalType === 'sync-log'
                   ? (e) => e.preventDefault()
                   : handleSave
               }
@@ -1541,6 +1565,27 @@ const App = () => {
                     </>
                   )}
                 </>
+              ) : modalType === 'sync-log' ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500">Ultimos errores de sincronizacion (max 50).</p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {syncErrors.map((err, idx) => (
+                      <div key={`${err.id}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-slate-700">
+                          [{err.time}] {err.collection}/{err.id} ({err.type})
+                        </span>
+                      </div>
+                    ))}
+                    {syncErrors.length === 0 && <p className="text-xs text-slate-400">Sin errores registrados.</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+                  >
+                    Cerrar
+                  </button>
+                </div>
               ) : modalType === 'service-add' ? (
                 <>
                   <InputLabel label="Nombre del Servicio" name="serviceName" required />
@@ -1668,7 +1713,10 @@ const App = () => {
                   />
                 </>
               )}
-              {modalType !== 'pharmacist-manage' && modalType !== 'condition-manage' && modalType !== 'service-manage' && (
+              {modalType !== 'pharmacist-manage' &&
+                modalType !== 'condition-manage' &&
+                modalType !== 'service-manage' &&
+                modalType !== 'sync-log' && (
                 <button
                   type="submit"
                   className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
