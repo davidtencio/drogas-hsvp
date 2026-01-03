@@ -63,12 +63,14 @@ const App = () => {
   const [cloudLoading, setCloudLoading] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
+  const [queueOverflow, setQueueOverflow] = useState(false);
   const [partialLoad, setPartialLoad] = useState(false);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
   const createdAtBackfillRef = useRef({});
+  const dataDocPath = authUser?.email ? `orgData/${authUser.email.split('@')[0]}` : `appState/${authUser?.uid || 'anon'}`;
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const formatCurrency = (value) => {
@@ -124,6 +126,7 @@ const App = () => {
     const next = [...(pendingWritesRef.current || []), action];
     pendingWritesRef.current = next;
     const capped = next.slice(0, 200);
+    setQueueOverflow(next.length > 200);
     pendingWritesRef.current = capped;
     localStorage.setItem('pharmaPendingWrites', JSON.stringify(capped));
     setPendingCount(capped.length);
@@ -143,9 +146,9 @@ const App = () => {
       for (const action of queue) {
         try {
           if (action.type === 'set') {
-            await setDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)), action.data, { merge: true });
+            await setDoc(doc(db, dataDocPath, action.collection, String(action.id)), action.data, { merge: true });
           } else if (action.type === 'delete') {
-            await deleteDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)));
+            await deleteDoc(doc(db, dataDocPath, action.collection, String(action.id)));
           }
         } catch {
           remaining.push(action);
@@ -166,6 +169,7 @@ const App = () => {
         setSyncError('');
         retryCountRef.current = 0;
         setSyncErrors([]);
+        setQueueOverflow(false);
       } else {
         setCloudStatus('Sin conexion');
         setSyncError('Algunos registros no pudieron sincronizarse.');
@@ -225,6 +229,8 @@ const App = () => {
         setSelectedMedId(INITIAL_MEDICATIONS[0].id);
         setPendingCount(0);
         setSyncErrors([]);
+        setQueueOverflow(false);
+        setPartialLoad(false);
       }
     });
     return () => unsubscribe();
@@ -236,6 +242,7 @@ const App = () => {
       if (Array.isArray(stored)) {
         pendingWritesRef.current = stored;
         setPendingCount(stored.length);
+        setQueueOverflow(stored.length > 200);
       }
     } catch {
       pendingWritesRef.current = [];
@@ -254,10 +261,13 @@ const App = () => {
     if (!authUser) return;
     let cancelled = false;
     const hydrateFromCloud = async () => {
+      setPartialLoad(false);
       setCloudLoading(true);
       setCloudStatus('Sincronizando...');
+      let hadPartial = false;
+      let hadLoadError = false;
       try {
-        const ref = doc(db, 'appState', authUser.uid);
+        const ref = doc(db, dataDocPath);
         const snap = await getDoc(ref);
         if (cancelled) return;
         if (snap.exists()) {
@@ -271,15 +281,15 @@ const App = () => {
             const batch = writeBatch(db);
             data.transactions?.forEach((item) => {
               const createdAt = item.createdAt ?? parseDateTime(item.date)?.getTime() ?? Date.now();
-              batch.set(doc(db, 'appState', authUser.uid, 'transactions', String(item.id)), { ...item, createdAt }, { merge: true });
+              batch.set(doc(db, dataDocPath, 'transactions', String(item.id)), { ...item, createdAt }, { merge: true });
             });
             data.expedientes?.forEach((item) => {
               const createdAt = item.createdAt ?? parseDateTime(item.fecha)?.getTime() ?? Date.now();
-              batch.set(doc(db, 'appState', authUser.uid, 'expedientes', String(item.id)), { ...item, createdAt }, { merge: true });
+              batch.set(doc(db, dataDocPath, 'expedientes', String(item.id)), { ...item, createdAt }, { merge: true });
             });
             data.bitacora?.forEach((item) => {
               const createdAt = item.createdAt ?? parseDateTime(item.fecha)?.getTime() ?? Date.now();
-              batch.set(doc(db, 'appState', authUser.uid, 'bitacora', String(item.id)), { ...item, createdAt }, { merge: true });
+              batch.set(doc(db, dataDocPath, 'bitacora', String(item.id)), { ...item, createdAt }, { merge: true });
             });
             await batch.commit();
             await setDoc(
@@ -291,33 +301,43 @@ const App = () => {
         }
 
         const loadCollection = async (name, setter, dateField) => {
-          const colRef = collection(db, 'appState', authUser.uid, name);
+          const colRef = collection(db, dataDocPath, name);
           if (!createdAtBackfillRef.current[name]) {
             createdAtBackfillRef.current[name] = true;
-            const backfillQuery = query(colRef, orderBy('__name__'), limit(8000));
-            const backfillSnap = await getDocs(backfillQuery);
-            let batch = writeBatch(db);
-            let batchCount = 0;
-            backfillSnap.docs.forEach((docSnap) => {
-              const data = docSnap.data();
-              if (data.createdAt) return;
-              const source = data[dateField];
-              const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
-              batch.set(docSnap.ref, { createdAt, updatedAt: Date.now() }, { merge: true });
-              batchCount += 1;
-              if (batchCount >= 450) {
-                batch.commit();
-                batch = writeBatch(db);
-                batchCount = 0;
+            let last = null;
+            while (true) {
+              const pageQuery = last
+                ? query(colRef, orderBy('__name__'), startAfter(last), limit(500))
+                : query(colRef, orderBy('__name__'), limit(500));
+              const backfillSnap = await getDocs(pageQuery);
+              if (backfillSnap.empty) break;
+              let batch = writeBatch(db);
+              let batchCount = 0;
+              backfillSnap.docs.forEach((docSnap) => {
+                const data = docSnap.data();
+                if (data.createdAt) return;
+                const source = data[dateField];
+                const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
+                batch.set(docSnap.ref, { createdAt, updatedAt: Date.now() }, { merge: true });
+                batchCount += 1;
+                if (batchCount >= 450) {
+                  batch.commit();
+                  batch = writeBatch(db);
+                  batchCount = 0;
+                }
+              });
+              if (batchCount > 0) {
+                await batch.commit();
               }
-            });
-            if (batchCount > 0) {
-              await batch.commit();
+              last = backfillSnap.docs[backfillSnap.docs.length - 1];
+              if (backfillSnap.docs.length < 500) break;
+              await delay(50);
             }
           }
           const items = [];
           let lastDoc = null;
           let usedFallback = false;
+          let hadError = false;
           while (items.length < 8000) {
             try {
               const q = lastDoc
@@ -331,28 +351,37 @@ const App = () => {
               await delay(50);
             } catch {
               usedFallback = true;
-              const fallbackQuery = lastDoc
-                ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(500))
-                : query(colRef, orderBy('__name__'), limit(500));
-              const snap = await getDocs(fallbackQuery);
-              if (snap.empty) break;
-              items.push(...snap.docs.map((d) => d.data()));
-              lastDoc = snap.docs[snap.docs.length - 1];
-              if (snap.docs.length < 500) break;
-              await delay(50);
+              try {
+                const fallbackQuery = lastDoc
+                  ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(500))
+                  : query(colRef, orderBy('__name__'), limit(500));
+                const snap = await getDocs(fallbackQuery);
+                if (snap.empty) break;
+                items.push(...snap.docs.map((d) => d.data()));
+                lastDoc = snap.docs[snap.docs.length - 1];
+                if (snap.docs.length < 500) break;
+                await delay(50);
+              } catch {
+                hadError = true;
+                break;
+              }
             }
           }
           setter(items.slice(0, 8000));
-          return { items, usedFallback };
+          return { items, usedFallback, hadError };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
           loadCollection('transactions', setTransactions, 'date'),
           loadCollection('expedientes', setExpedientes, 'fecha'),
           loadCollection('bitacora', setBitacora, 'fecha'),
         ]);
-        setPartialLoad(
-          transactionsLoaded.usedFallback || expedientesLoaded.usedFallback || bitacoraLoaded.usedFallback,
-        );
+        const anyFallback =
+          transactionsLoaded.usedFallback || expedientesLoaded.usedFallback || bitacoraLoaded.usedFallback;
+        const anyError = transactionsLoaded.hadError || expedientesLoaded.hadError || bitacoraLoaded.hadError;
+        hadPartial = anyFallback || anyError;
+        hadLoadError = anyError;
+        setPartialLoad(hadPartial);
+        if (anyError) setCloudStatus('Sin conexion');
       } catch {
         try {
           const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
@@ -370,8 +399,8 @@ const App = () => {
       } finally {
         if (!cancelled) {
           setCloudReady(true);
-          if (syncError) setCloudStatus('Sin conexion');
-          else if (partialLoad) setCloudStatus('Carga parcial');
+          if (syncError || hadLoadError) setCloudStatus('Sin conexion');
+          else if (hadPartial) setCloudStatus('Carga parcial');
           else setCloudStatus('Sincronizado');
           setCloudLoading(false);
         }
@@ -440,7 +469,7 @@ const App = () => {
       selectedMedId,
     };
     setCloudStatus('Sincronizando...');
-    setDoc(doc(db, 'appState', authUser.uid), cloudPayload, { merge: true })
+    setDoc(doc(db, dataDocPath), cloudPayload, { merge: true })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
@@ -723,6 +752,11 @@ const App = () => {
               >
                 Reintentar
               </button>
+            )}
+            {queueOverflow && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">
+                Cola llena (200)
+              </span>
             )}
             {syncError && (
               <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">
