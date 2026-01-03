@@ -73,6 +73,40 @@ const App = () => {
   const [kardexHistoricPage, setKardexHistoricPage] = useState(1);
   const [auditoriaPage, setAuditoriaPage] = useState(1);
   const [bitacoraPage, setBitacoraPage] = useState(1);
+  // Data States moved up
+  const [transactions, setTransactions] = useState([
+    {
+      id: 1,
+      date: '27/08/2025 13:34',
+      medId: 'morf-15',
+      type: 'IN',
+      amount: 184,
+      service: 'INGRESO A INVENTARIO',
+      pharmacist: '2492 ESTHER HERNANDEZ',
+      prescription: '',
+      cama: '',
+      rxType: 'CERRADA',
+      rxQuantity: 0,
+      rxUsed: 0,
+    },
+  ]);
+  const [expedientes, setExpedientes] = useState([
+    {
+      id: 1,
+      fecha: '27/08/2025 21:27',
+      servicio: 'EMERGENCIAS',
+      cedula: '107910955',
+      receta: '9851303L',
+      medicamento: 'DIAZEPAM 10 MG',
+      dosis: '1 AMP STAT',
+      condicion: 'VALIDACION',
+      farmaceutico: '2488 VIVIANA ESQUIVEL',
+    },
+  ]);
+  const [bitacora, setBitacora] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState('');
+  const [cloudReady, setCloudReady] = useState(false);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -201,11 +235,11 @@ const App = () => {
           const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
           retryTimeoutRef.current = setTimeout(() => {
             retryTimeoutRef.current = null;
-          retryCountRef.current += 1;
-          flushWriteQueue();
-        }, delayMs);
+            retryCountRef.current += 1;
+            flushWriteQueue();
+          }, delayMs);
+        }
       }
-    }
     } catch {
       setCloudStatus('Sin conexion');
     } finally {
@@ -517,41 +551,7 @@ const App = () => {
     };
   }, [authUser]);
 
-  // Data States
-  const [transactions, setTransactions] = useState([
-    {
-      id: 1,
-      date: '27/08/2025 13:34',
-      medId: 'morf-15',
-      type: 'IN',
-      amount: 184,
-      service: 'INGRESO A INVENTARIO',
-      pharmacist: '2492 ESTHER HERNANDEZ',
-      prescription: '',
-      cama: '',
-      rxType: 'CERRADA',
-      rxQuantity: 0,
-      rxUsed: 0,
-    },
-  ]);
-  const [expedientes, setExpedientes] = useState([
-    {
-      id: 1,
-      fecha: '27/08/2025 21:27',
-      servicio: 'EMERGENCIAS',
-      cedula: '107910955',
-      receta: '9851303L',
-      medicamento: 'DIAZEPAM 10 MG',
-      dosis: '1 AMP STAT',
-      condicion: 'VALIDACION',
-      farmaceutico: '2488 VIVIANA ESQUIVEL',
-    },
-  ]);
-  const [bitacora, setBitacora] = useState([]);
-
-  const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState('');
-  const [cloudReady, setCloudReady] = useState(false);
+  // Data States moved to top
 
   useEffect(() => {
     const localPayload = {
@@ -921,15 +921,14 @@ const App = () => {
               </span>
             )}
             <span
-              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border ${
-                cloudStatus === 'Sincronizado'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : cloudStatus === 'Sin conexion'
-                    ? 'border-rose-200 bg-rose-50 text-rose-700'
-                    : cloudStatus === 'Carga parcial'
-                      ? 'border-amber-200 bg-amber-50 text-amber-700'
-                      : 'border-slate-200 bg-slate-50 text-slate-600'
-              }`}
+              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border ${cloudStatus === 'Sincronizado'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : cloudStatus === 'Sin conexion'
+                  ? 'border-rose-200 bg-rose-50 text-rose-700'
+                  : cloudStatus === 'Carga parcial'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
             >
               {cloudStatus}
             </span>
@@ -1269,75 +1268,75 @@ const App = () => {
                       key={t.id}
                       className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}
                     >
-                        <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
-                        <td className="px-6 py-4 text-center">
-                          {t.isCierre ? (
-                            <span className="font-bold uppercase text-amber-700">Cierre</span>
-                          ) : (
-                            <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                              {t.amount}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 font-medium text-slate-700 text-center">
-                          {t.isCierre ? (
-                            <span className="font-bold text-slate-700">{t.cierreTurno}</span>
-                          ) : (
-                            <>
-                              {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
-                            </>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          {t.isCierre ? (
-                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
-                          ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenRxUse(t)}
-                              className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
-                              title="Registrar nuevo rebajo"
-                            >
-                              {t.rxUsed || 0} de {t.rxQuantity}
-                            </button>
-                          ) : (
-                            <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
-                          {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex gap-2 justify-center">
-                            {!t.isCierre && (
-                              <button
-                                onClick={() => {
-                                  setEditingTransactionId(t.id);
-                                  setModalType('kardex-edit');
-                                  setRxTypeValue(t.rxType || 'CERRADA');
-                                  setIsQuickIngreso(false);
-                                  setShowModal(true);
-                                }}
-                                className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
-                              >
-                                Editar
-                              </button>
-                            )}
+                      <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
+                      <td className="px-6 py-4 text-center">
+                        {t.isCierre ? (
+                          <span className="font-bold uppercase text-amber-700">Cierre</span>
+                        ) : (
+                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                            {t.amount}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 font-medium text-slate-700 text-center">
+                        {t.isCierre ? (
+                          <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                        ) : (
+                          <>
+                            {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {t.isCierre ? (
+                          <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                        ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRxUse(t)}
+                            className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                            title="Registrar nuevo rebajo"
+                          >
+                            {t.rxUsed || 0} de {t.rxQuantity}
+                          </button>
+                        ) : (
+                          <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
+                        {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2 justify-center">
+                          {!t.isCierre && (
                             <button
                               onClick={() => {
-                                const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
-                                if (!confirmDelete) return;
-                                setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                setEditingTransactionId(t.id);
+                                setModalType('kardex-edit');
+                                setRxTypeValue(t.rxType || 'CERRADA');
+                                setIsQuickIngreso(false);
+                                setShowModal(true);
                               }}
-                              className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                              className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
                             >
-                              Eliminar
+                              Editar
                             </button>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                          )}
+                          <button
+                            onClick={() => {
+                              const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
+                              if (!confirmDelete) return;
+                              setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                              enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                            }}
+                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
                     </tr>
                   ))}
                   {recentTransactions.length === 0 && (
@@ -1505,9 +1504,8 @@ const App = () => {
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span
-                        className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider ${
-                          e.condicion === 'VALIDACION' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'
-                        }`}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider ${e.condicion === 'VALIDACION' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'
+                          }`}
                       >
                         {e.condicion}
                       </span>
@@ -1664,38 +1662,38 @@ const App = () => {
                         ? 'Editar Expediente'
                         : modalType === 'bitacora'
                           ? 'Nuevo Registro de Bitacora'
-                        : modalType === 'cierre'
-                          ? 'Cierre de Inventario'
-                        : modalType === 'sync-log'
-                          ? 'Log de Sincronizacion'
-                        : modalType === 'med-edit'
-                          ? 'Editar Medicamento'
-                          : modalType === 'service-add'
-                            ? 'Nuevo Servicio'
-                            : modalType === 'service-manage'
-                              ? 'Eliminar Servicio'
-                              : modalType === 'pharmacist-add'
-                                ? 'Nuevo Farmaceutico'
-                                : modalType === 'pharmacist-manage'
-                                  ? 'Eliminar Farmaceutico'
-                                  : modalType === 'condition-add'
-                                    ? 'Nueva Condicion'
-                                    : modalType === 'condition-manage'
-                                      ? 'Eliminar Condicion'
-                                      : 'Nuevo Medicamento'}
+                          : modalType === 'cierre'
+                            ? 'Cierre de Inventario'
+                            : modalType === 'sync-log'
+                              ? 'Log de Sincronizacion'
+                              : modalType === 'med-edit'
+                                ? 'Editar Medicamento'
+                                : modalType === 'service-add'
+                                  ? 'Nuevo Servicio'
+                                  : modalType === 'service-manage'
+                                    ? 'Eliminar Servicio'
+                                    : modalType === 'pharmacist-add'
+                                      ? 'Nuevo Farmaceutico'
+                                      : modalType === 'pharmacist-manage'
+                                        ? 'Eliminar Farmaceutico'
+                                        : modalType === 'condition-add'
+                                          ? 'Nueva Condicion'
+                                          : modalType === 'condition-manage'
+                                            ? 'Eliminar Condicion'
+                                            : 'Nuevo Medicamento'}
               </h3>
-                  <button
-                    onClick={() => {
-                      setShowModal(false);
-                      setEditingMedId(null);
-                      setEditingTransactionId(null);
-                      setEditingExpedienteId(null);
-                      setPrefillKardexType('');
-                      setIsQuickIngreso(false);
-                      setRxTypeValue('CERRADA');
-                    }}
-                    className="text-slate-400 hover:text-slate-600"
-                  >
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setEditingMedId(null);
+                  setEditingTransactionId(null);
+                  setEditingExpedienteId(null);
+                  setPrefillKardexType('');
+                  setIsQuickIngreso(false);
+                  setRxTypeValue('CERRADA');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
                 x
               </button>
             </div>
@@ -1703,9 +1701,9 @@ const App = () => {
             <form
               onSubmit={
                 modalType === 'pharmacist-manage' ||
-                modalType === 'condition-manage' ||
-                modalType === 'service-manage' ||
-                modalType === 'sync-log'
+                  modalType === 'condition-manage' ||
+                  modalType === 'service-manage' ||
+                  modalType === 'sync-log'
                   ? (e) => e.preventDefault()
                   : handleSave
               }
@@ -1924,22 +1922,22 @@ const App = () => {
                     {services
                       .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
                       .map((name) => (
-                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                        <span className="text-xs font-bold text-slate-700">{name}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
-                            if (!confirmDelete) return;
-                            setServices(services.filter((s) => s !== name));
-                            enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
-                          }}
-                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    ))}
+                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          <span className="text-xs font-bold text-slate-700">{name}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
+                              if (!confirmDelete) return;
+                              setServices(services.filter((s) => s !== name));
+                              enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
+                            }}
+                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
                   </div>
                   <button
                     type="button"
@@ -1966,22 +1964,22 @@ const App = () => {
                     {pharmacists
                       .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
                       .map((name) => (
-                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                        <span className="text-xs font-bold text-slate-700">{name}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
-                            if (!confirmDelete) return;
-                            setPharmacists(pharmacists.filter((p) => p !== name));
-                            enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
-                          }}
-                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    ))}
+                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          <span className="text-xs font-bold text-slate-700">{name}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
+                              if (!confirmDelete) return;
+                              setPharmacists(pharmacists.filter((p) => p !== name));
+                              enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
+                            }}
+                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
                   </div>
                   <button
                     type="button"
@@ -2004,22 +2002,22 @@ const App = () => {
                     {condiciones
                       .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
                       .map((name) => (
-                      <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                        <span className="text-xs font-bold text-slate-700">{name}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
-                            if (!confirmDelete) return;
-                            setCondiciones(condiciones.filter((c) => c !== name));
-                            enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
-                          }}
-                          className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    ))}
+                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          <span className="text-xs font-bold text-slate-700">{name}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
+                              if (!confirmDelete) return;
+                              setCondiciones(condiciones.filter((c) => c !== name));
+                              enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
+                            }}
+                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
                   </div>
                   <button
                     type="button"
@@ -2073,13 +2071,13 @@ const App = () => {
                 modalType !== 'condition-manage' &&
                 modalType !== 'service-manage' &&
                 modalType !== 'sync-log' && (
-                <button
-                  type="submit"
-                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
-                >
-                  Guardar Registro
-                </button>
-              )}
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
+                  >
+                    Guardar Registro
+                  </button>
+                )}
             </form>
           </div>
         </div>
@@ -2092,9 +2090,8 @@ const App = () => {
 const NavItem = ({ active, icon, label, onClick }) => (
   <button
     onClick={onClick}
-    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-sm font-semibold ${
-      active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-    }`}
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-sm font-semibold ${active ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+      }`}
   >
     <span>{icon}</span>
     <span className="tracking-tight">{label}</span>
