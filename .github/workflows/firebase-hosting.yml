@@ -37,6 +37,9 @@ jobs:
             if [ -z "${!var}" ]; then
               echo "Missing $var"
               missing=1
+            else
+              val="${!var}"
+              echo "$var length: ${#val}"
             fi
           done
           if [ "$missing" -ne 0 ]; then
