@@ -210,7 +210,19 @@ const App = () => {
       setAuthUser(user);
       setAuthLoading(false);
       setCloudStatus(user ? 'Sincronizado' : 'Sin sesion');
-      if (!user) setCloudReady(false);
+      if (!user) {
+        setCloudReady(false);
+        setTransactions([]);
+        setExpedientes([]);
+        setBitacora([]);
+        setMedications(INITIAL_MEDICATIONS);
+        setServices(INITIAL_SERVICES);
+        setPharmacists(INITIAL_PHARMACISTS);
+        setCondiciones(INITIAL_CONDICIONES);
+        setSelectedMedId(INITIAL_MEDICATIONS[0].id);
+        setPendingCount(0);
+        setSyncErrors([]);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -285,10 +297,10 @@ const App = () => {
             let batchCount = 0;
             backfillSnap.docs.forEach((docSnap) => {
               const data = docSnap.data();
-              if (data.createdAt) return;
+              if (data.createdAt || data.updatedAt) return;
               const source = data[dateField];
               const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
-              batch.set(docSnap.ref, { createdAt }, { merge: true });
+              batch.set(docSnap.ref, { createdAt, updatedAt: Date.now() }, { merge: true });
               batchCount += 1;
               if (batchCount >= 450) {
                 batch.commit();
@@ -326,12 +338,16 @@ const App = () => {
             }
           }
           setter(items.slice(0, 8000));
+          return items;
         };
-        await Promise.all([
+        const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
           loadCollection('transactions', setTransactions, 'date'),
           loadCollection('expedientes', setExpedientes, 'fecha'),
           loadCollection('bitacora', setBitacora, 'fecha'),
         ]);
+        if (!transactionsLoaded || !expedientesLoaded || !bitacoraLoaded) {
+          setCloudStatus('Sin conexion');
+        }
       } catch {
         try {
           const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
@@ -349,7 +365,8 @@ const App = () => {
       } finally {
         if (!cancelled) {
           setCloudReady(true);
-          setCloudStatus('Sincronizado');
+          if (syncError) setCloudStatus('Sin conexion');
+          else setCloudStatus('Sincronizado');
           setCloudLoading(false);
         }
       }
