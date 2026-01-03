@@ -38,6 +38,7 @@ const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UC
 const INITIAL_PHARMACISTS = ['2492 ESTHER HERNANDEZ', '2488 VIVIANA ESQUIVEL', '3632 GINNETTE MONTERO', '4511 JEANNETTE SALAZAR'];
 const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
+const PAGE_SIZE = 25;
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -66,11 +67,18 @@ const App = () => {
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [partialLoad, setPartialLoad] = useState(false);
   const [showHistoric, setShowHistoric] = useState(false);
+  const [kardexSearch, setKardexSearch] = useState('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [kardexRecentPage, setKardexRecentPage] = useState(1);
+  const [kardexHistoricPage, setKardexHistoricPage] = useState(1);
+  const [auditoriaPage, setAuditoriaPage] = useState(1);
+  const [bitacoraPage, setBitacoraPage] = useState(1);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
   const createdAtBackfillRef = useRef({});
+  const kardexSearchRef = useRef(null);
   const ORG_ID = 'hsvp';
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
 
@@ -79,6 +87,15 @@ const App = () => {
     toUpper(value)
       .replace(/[\\/]/g, '-')
       .replace(/\s+/g, '_');
+  const paginate = (items, page) => {
+    const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    const current = Math.min(Math.max(page, 1), totalPages);
+    return {
+      page: current,
+      totalPages,
+      items: items.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE),
+    };
+  };
   const formatCurrency = (value) => {
     const num = Number(value);
     if (!Number.isFinite(num)) return '';
@@ -262,6 +279,37 @@ const App = () => {
       flushWriteQueue();
     }
   }, [authUser]);
+
+  useEffect(() => {
+    if (!showModal) {
+      setCatalogSearch('');
+    }
+  }, [showModal]);
+
+  useEffect(() => {
+    setKardexRecentPage(1);
+    setKardexHistoricPage(1);
+  }, [selectedMedId, kardexSearch]);
+
+  useEffect(() => {
+    const handleShortcuts = (event) => {
+      if (!event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'n') {
+        if (showModal) return;
+        event.preventDefault();
+        setIsQuickIngreso(false);
+        setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
+        setShowModal(true);
+      }
+      if (key === 'f' && activeTab === 'kardex') {
+        event.preventDefault();
+        kardexSearchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, [activeTab, showModal]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -559,8 +607,43 @@ const App = () => {
     [currentInventory, expedientes],
   );
 
+  const sortedExpedientes = useMemo(() => {
+    return [...expedientes].sort((a, b) => {
+      const aTime = a.createdAt ?? parseDateTime(a.fecha)?.getTime() ?? 0;
+      const bTime = b.createdAt ?? parseDateTime(b.fecha)?.getTime() ?? 0;
+      return bTime - aTime;
+    });
+  }, [expedientes]);
+
+  const sortedBitacora = useMemo(() => {
+    return [...bitacora].sort((a, b) => {
+      const aTime = a.createdAt ?? parseDateTime(a.fecha)?.getTime() ?? 0;
+      const bTime = b.createdAt ?? parseDateTime(b.fecha)?.getTime() ?? 0;
+      return bTime - aTime;
+    });
+  }, [bitacora]);
+
   const { recentTransactions, historicTransactions } = useMemo(() => {
-    const medTransactions = transactions.filter((t) => t.medId === selectedMedId);
+    const searchValue = toUpper(kardexSearch);
+    const matchesSearch = (t) => {
+      if (!searchValue) return true;
+      const haystack = [
+        t.service,
+        t.cama,
+        t.prescription,
+        t.pharmacist,
+        t.rxType,
+        t.type,
+        t.date,
+        t.cierreTurno,
+        t.totalRecetas,
+        t.totalMedicamento,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      return toUpper(haystack).includes(searchValue);
+    };
+    const medTransactions = transactions.filter((t) => t.medId === selectedMedId && matchesSearch(t));
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     const recent = [];
@@ -573,8 +656,18 @@ const App = () => {
         historic.push(t);
       }
     });
-    return { recentTransactions: recent, historicTransactions: historic };
-  }, [transactions, selectedMedId]);
+    const sortByDate = (a, b) => {
+      const aTime = a.createdAt ?? parseDateTime(a.date)?.getTime() ?? 0;
+      const bTime = b.createdAt ?? parseDateTime(b.date)?.getTime() ?? 0;
+      return bTime - aTime;
+    };
+    return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
+  }, [transactions, selectedMedId, kardexSearch]);
+
+  const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
+  const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
+  const auditoriaPageData = useMemo(() => paginate(sortedExpedientes, auditoriaPage), [sortedExpedientes, auditoriaPage]);
+  const bitacoraPageData = useMemo(() => paginate(sortedBitacora, bitacoraPage), [sortedBitacora, bitacoraPage]);
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -761,6 +854,16 @@ const App = () => {
     return '';
   };
 
+  const getTransactionLabel = (t) => {
+    if (t.isCierre) {
+      return `CIERRE ${t.cierreTurno || ''} - ${t.date}`;
+    }
+    const medName = medications.find((m) => m.id === t.medId)?.name || t.medId;
+    const tipo = t.type === 'IN' ? 'INGRESO' : 'SALIDA';
+    const receta = t.prescription ? `RECETA ${t.prescription}` : 'SIN RECETA';
+    return `${tipo} ${t.amount} - ${medName} (${receta}) ${t.date}`;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans text-slate-900 overflow-hidden">
       {/* Sidebar - Clean & Professional */}
@@ -812,6 +915,11 @@ const App = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {(pendingCount > 0 || syncError || queueOverflow) && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg bg-rose-600 text-white">
+                Datos sin sincronizar
+              </span>
+            )}
             <span
               className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border ${
                 cloudStatus === 'Sincronizado'
@@ -1063,6 +1171,15 @@ const App = () => {
                   ))}
                 </select>
               </div>
+              <div className="flex-1 px-4 max-w-md">
+                <input
+                  ref={kardexSearchRef}
+                  value={kardexSearch}
+                  onChange={(e) => setKardexSearch(e.target.value)}
+                  placeholder="Buscar receta, servicio, farmaceutico..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-600 outline-none"
+                />
+              </div>
               <div className="flex items-center gap-4 text-xs">
                 <div className="flex gap-2">
                   <button
@@ -1111,7 +1228,10 @@ const App = () => {
                   <button
                     onClick={() => {
                       const med = medications.find((m) => m.id === selectedMedId);
-                      const confirmDelete = window.confirm(`Eliminar ${med?.name || 'medicamento'}? Se borraran sus movimientos.`);
+                      const movementCount = transactions.filter((t) => t.medId === selectedMedId).length;
+                      const confirmDelete = window.confirm(
+                        `Eliminar ${med?.name || 'medicamento'}? Se borraran ${movementCount} movimientos asociados.`,
+                      );
                       if (!confirmDelete) return;
                       setTransactions(transactions.filter((t) => t.medId !== selectedMedId));
                       const updated = medications.filter((m) => m.id !== selectedMedId);
@@ -1144,7 +1264,7 @@ const App = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {recentTransactions.map((t) => (
+                  {recentPage.items.map((t) => (
                     <tr
                       key={t.id}
                       className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}
@@ -1206,7 +1326,7 @@ const App = () => {
                             )}
                             <button
                               onClick={() => {
-                                const confirmDelete = window.confirm('Eliminar este movimiento?');
+                                const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
                                 if (!confirmDelete) return;
                                 setTransactions(transactions.filter((tx) => tx.id !== t.id));
                                 enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
@@ -1229,6 +1349,12 @@ const App = () => {
                   )}
                 </tbody>
               </table>
+              <Pagination
+                page={recentPage.page}
+                totalPages={recentPage.totalPages}
+                onPrev={() => setKardexRecentPage((prev) => Math.max(prev - 1, 1))}
+                onNext={() => setKardexRecentPage((prev) => Math.min(prev + 1, recentPage.totalPages))}
+              />
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1256,7 +1382,7 @@ const App = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {historicTransactions.map((t) => (
+                    {historicPage.items.map((t) => (
                       <tr key={t.id} className={`hover:bg-slate-50/50 ${getKardexRowClass(t)}`}>
                         <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                         <td className="px-6 py-4 text-center">
@@ -1315,7 +1441,7 @@ const App = () => {
                             )}
                             <button
                               onClick={() => {
-                                const confirmDelete = window.confirm('Eliminar este movimiento?');
+                                const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
                                 if (!confirmDelete) return;
                                 setTransactions(transactions.filter((tx) => tx.id !== t.id));
                                 enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
@@ -1339,6 +1465,14 @@ const App = () => {
                   </tbody>
                 </table>
               )}
+              {showHistoric && (
+                <Pagination
+                  page={historicPage.page}
+                  totalPages={historicPage.totalPages}
+                  onPrev={() => setKardexHistoricPage((prev) => Math.max(prev - 1, 1))}
+                  onNext={() => setKardexHistoricPage((prev) => Math.min(prev + 1, historicPage.totalPages))}
+                />
+              )}
             </div>
           </div>
         )}
@@ -1359,7 +1493,7 @@ const App = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {expedientes.map((e) => (
+                {auditoriaPageData.items.map((e) => (
                   <tr key={e.id} className="hover:bg-slate-50/50">
                     <td className="px-6 py-4 text-slate-500 text-center">{e.fecha}</td>
                     <td className="px-6 py-4 text-center text-xs font-bold text-slate-700">{e.servicio}</td>
@@ -1393,7 +1527,9 @@ const App = () => {
                         </button>
                         <button
                           onClick={() => {
-                            const confirmDelete = window.confirm('Eliminar este expediente?');
+                            const confirmDelete = window.confirm(
+                              `Eliminar expediente de ${e.cedula} (${e.medicamento}) - Receta ${e.receta || '---'}?`,
+                            );
                             if (!confirmDelete) return;
                             setExpedientes(expedientes.filter((exp) => exp.id !== e.id));
                             enqueueWrite({ type: 'delete', collection: 'expedientes', id: e.id });
@@ -1407,8 +1543,21 @@ const App = () => {
                     <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{e.farmaceutico}</td>
                   </tr>
                 ))}
+                {sortedExpedientes.length === 0 && (
+                  <tr>
+                    <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={8}>
+                      Sin registros en auditoria.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
+            <Pagination
+              page={auditoriaPageData.page}
+              totalPages={auditoriaPageData.totalPages}
+              onPrev={() => setAuditoriaPage((prev) => Math.max(prev - 1, 1))}
+              onNext={() => setAuditoriaPage((prev) => Math.min(prev + 1, auditoriaPageData.totalPages))}
+            />
           </div>
         )}
 
@@ -1424,7 +1573,7 @@ const App = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {bitacora.map((b) => (
+                {bitacoraPageData.items.map((b) => (
                   <tr key={b.id} className="hover:bg-slate-50/50">
                     <td className="px-6 py-4 text-slate-500 text-center">{b.fecha}</td>
                     <td className="px-6 py-4 text-center text-xs font-bold text-slate-700">{b.servicio}</td>
@@ -1435,7 +1584,7 @@ const App = () => {
                     <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{b.responsable}</td>
                   </tr>
                 ))}
-                {bitacora.length === 0 && (
+                {sortedBitacora.length === 0 && (
                   <tr>
                     <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={4}>
                       Sin registros en la bitacora.
@@ -1444,6 +1593,12 @@ const App = () => {
                 )}
               </tbody>
             </table>
+            <Pagination
+              page={bitacoraPageData.page}
+              totalPages={bitacoraPageData.totalPages}
+              onPrev={() => setBitacoraPage((prev) => Math.max(prev - 1, 1))}
+              onNext={() => setBitacoraPage((prev) => Math.min(prev + 1, bitacoraPageData.totalPages))}
+            />
           </div>
         )}
 
@@ -1759,13 +1914,23 @@ const App = () => {
               ) : modalType === 'service-manage' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Eliminar un servicio no afecta el historial.</p>
+                  <InputLabel
+                    label="Buscar"
+                    name="catalogSearch"
+                    value={catalogSearch}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
+                  />
                   <div className="space-y-2">
-                    {services.map((name) => (
+                    {services
+                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                      .map((name) => (
                       <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
                           onClick={() => {
+                            const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
+                            if (!confirmDelete) return;
                             setServices(services.filter((s) => s !== name));
                             enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
                           }}
@@ -1791,13 +1956,23 @@ const App = () => {
               ) : modalType === 'pharmacist-manage' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Eliminar un farmaceutico no afecta el historial de rebajos.</p>
+                  <InputLabel
+                    label="Buscar"
+                    name="catalogSearch"
+                    value={catalogSearch}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
+                  />
                   <div className="space-y-2">
-                    {pharmacists.map((name) => (
+                    {pharmacists
+                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                      .map((name) => (
                       <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
                           onClick={() => {
+                            const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
+                            if (!confirmDelete) return;
                             setPharmacists(pharmacists.filter((p) => p !== name));
                             enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
                           }}
@@ -1819,13 +1994,23 @@ const App = () => {
               ) : modalType === 'condition-manage' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Eliminar una condicion no afecta el historial.</p>
+                  <InputLabel
+                    label="Buscar"
+                    name="catalogSearch"
+                    value={catalogSearch}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
+                  />
                   <div className="space-y-2">
-                    {condiciones.map((name) => (
+                    {condiciones
+                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                      .map((name) => (
                       <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                         <span className="text-xs font-bold text-slate-700">{name}</span>
                         <button
                           type="button"
                           onClick={() => {
+                            const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
+                            if (!confirmDelete) return;
                             setCondiciones(condiciones.filter((c) => c !== name));
                             enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
                           }}
@@ -1947,6 +2132,30 @@ const SelectLabel = ({ label, options, isObject, ...props }) => (
         </option>
       ))}
     </select>
+  </div>
+);
+
+const Pagination = ({ page, totalPages, onPrev, onNext }) => (
+  <div className="flex items-center justify-between px-6 py-3 text-xs text-slate-500 border-t border-slate-100">
+    <span className="font-semibold">Pagina {page} de {totalPages}</span>
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={page <= 1}
+        className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Anterior
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={page >= totalPages}
+        className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Siguiente
+      </button>
+    </div>
   </div>
 );
 
