@@ -60,8 +60,12 @@ const App = () => {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
+  const [cloudLoading, setCloudLoading] = useState(false);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
+  const retryTimeoutRef = useRef(null);
+  const retryCountRef = useRef(0);
+  const createdAtBackfillRef = useRef({});
 
   const toUpper = (value) => (value ? value.toString().toUpperCase().trim() : '');
   const formatCurrency = (value) => {
@@ -95,6 +99,7 @@ const App = () => {
     const [hour = 0, minute = 0] = (timePart || '').split(':').map(Number);
     return new Date(year, month - 1, day, hour, minute);
   };
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const handleOpenRxUse = (transaction) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
@@ -139,8 +144,17 @@ const App = () => {
       localStorage.removeItem('pharmaPendingWrites');
       setPendingCount(0);
       setCloudStatus('Sincronizado');
+      retryCountRef.current = 0;
     } catch {
       setCloudStatus('Sin conexion');
+      if (!retryTimeoutRef.current) {
+        const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
+        retryTimeoutRef.current = setTimeout(() => {
+          retryTimeoutRef.current = null;
+          retryCountRef.current += 1;
+          flushWriteQueue();
+        }, delayMs);
+      }
     } finally {
       isFlushingRef.current = false;
     }
@@ -202,6 +216,7 @@ const App = () => {
     if (!authUser) return;
     let cancelled = false;
     const hydrateFromCloud = async () => {
+      setCloudLoading(true);
       setCloudStatus('Sincronizando...');
       try {
         const ref = doc(db, 'appState', authUser.uid);
@@ -237,8 +252,30 @@ const App = () => {
           }
         }
 
-        const loadCollection = async (name, setter) => {
+        const loadCollection = async (name, setter, dateField) => {
           const colRef = collection(db, 'appState', authUser.uid, name);
+          if (!createdAtBackfillRef.current[name]) {
+            createdAtBackfillRef.current[name] = true;
+            const backfillQuery = query(colRef, orderBy('__name__'), limit(8000));
+            const backfillSnap = await getDocs(backfillQuery);
+            const batch = writeBatch(db);
+            let batchCount = 0;
+            backfillSnap.docs.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (data.createdAt) return;
+              const source = data[dateField];
+              const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
+              batch.set(docSnap.ref, { createdAt }, { merge: true });
+              batchCount += 1;
+              if (batchCount >= 450) {
+                batch.commit();
+                batchCount = 0;
+              }
+            });
+            if (batchCount > 0) {
+              await batch.commit();
+            }
+          }
           const items = [];
           let lastDoc = null;
           while (items.length < 8000) {
@@ -250,13 +287,14 @@ const App = () => {
             items.push(...snap.docs.map((d) => d.data()));
             lastDoc = snap.docs[snap.docs.length - 1];
             if (snap.docs.length < 500) break;
+            await delay(50);
           }
           setter(items.slice(0, 8000));
         };
         await Promise.all([
-          loadCollection('transactions', setTransactions),
-          loadCollection('expedientes', setExpedientes),
-          loadCollection('bitacora', setBitacora),
+          loadCollection('transactions', setTransactions, 'date'),
+          loadCollection('expedientes', setExpedientes, 'fecha'),
+          loadCollection('bitacora', setBitacora, 'fecha'),
         ]);
       } catch {
         try {
@@ -276,6 +314,7 @@ const App = () => {
         if (!cancelled) {
           setCloudReady(true);
           setCloudStatus('Sincronizado');
+          setCloudLoading(false);
         }
       }
     };
@@ -637,6 +676,12 @@ const App = () => {
                   setCondiciones(INITIAL_CONDICIONES);
                   setSelectedMedId(INITIAL_MEDICATIONS[0].id);
                   setPendingCount(0);
+                  pendingWritesRef.current = [];
+                  isFlushingRef.current = false;
+                  if (retryTimeoutRef.current) {
+                    clearTimeout(retryTimeoutRef.current);
+                    retryTimeoutRef.current = null;
+                  }
                   setCloudStatus('Sin sesion');
                   localStorage.removeItem('pharmaControlData');
                   localStorage.removeItem('pharmaPendingWrites');
@@ -1234,6 +1279,14 @@ const App = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {authUser && (authLoading || cloudLoading || !cloudReady) && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-40">
+          <div className="bg-white rounded-xl px-6 py-4 shadow-lg border border-slate-200">
+            <p className="text-sm font-bold text-slate-700">Cargando datos...</p>
           </div>
         </div>
       )}
