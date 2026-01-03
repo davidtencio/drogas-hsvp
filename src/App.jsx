@@ -377,7 +377,7 @@ const App = () => {
         date: now,
         createdAt: Date.now(),
         medId,
-        type: isQuickIngreso ? 'IN' : formData.get('type'),
+        type: isQuickIngreso ? 'IN' : 'OUT',
         amount: parseInt(formData.get('amount'), 10),
         service: isQuickIngreso ? 'INGRESO A INVENTARIO' : toUpper(formData.get('service')),
         cama: isQuickIngreso ? '' : toUpper(formData.get('cama')),
@@ -399,7 +399,7 @@ const App = () => {
         date: now,
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId: formData.get('medicationId'),
-        type: formData.get('type'),
+        type: current?.type === 'IN' ? 'IN' : 'OUT',
         amount: parseInt(formData.get('amount'), 10),
         service: toUpper(formData.get('service')),
         cama: toUpper(formData.get('cama')),
@@ -1359,13 +1359,6 @@ const App = () => {
                         )}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
-                        <SelectLabel
-                          label="Tipo Movimiento"
-                          name="type"
-                          options={[{ value: 'OUT', label: 'Salida' }, { value: 'IN', label: 'Entrada' }]}
-                          isObject
-                          defaultValue={prefillKardexType || transactions.find((t) => t.id === editingTransactionId)?.type || 'OUT'}
-                        />
                         <InputLabel
                           label="Cantidad"
                           name="amount"
@@ -1373,6 +1366,7 @@ const App = () => {
                           required
                           defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
                         />
+                        <div />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <SelectLabel
