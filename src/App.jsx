@@ -1067,7 +1067,9 @@ const App = () => {
                           ? t.cierreTurno === 'CIERRE 24 HORAS'
                             ? 'bg-rose-50'
                             : 'bg-amber-50'
-                          : ''
+                          : t.type === 'IN' && t.service === 'INGRESO A INVENTARIO'
+                            ? 'bg-emerald-50'
+                            : ''
                       }`}
                     >
                         <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
@@ -1177,7 +1179,9 @@ const App = () => {
                           ? t.cierreTurno === 'CIERRE 24 HORAS'
                             ? 'bg-rose-50'
                             : 'bg-amber-50'
-                          : ''
+                          : t.type === 'IN' && t.service === 'INGRESO A INVENTARIO'
+                            ? 'bg-emerald-50'
+                            : ''
                       }`}
                     >
                       <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
