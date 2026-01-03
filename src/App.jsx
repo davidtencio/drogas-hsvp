@@ -61,6 +61,7 @@ const App = () => {
   const [authError, setAuthError] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   const [cloudLoading, setCloudLoading] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -133,28 +134,40 @@ const App = () => {
     isFlushingRef.current = true;
     setCloudStatus('Sincronizando...');
     try {
+      const remaining = [];
       for (const action of queue) {
-        if (action.type === 'set') {
-          await setDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)), action.data, { merge: true });
-        } else if (action.type === 'delete') {
-          await deleteDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)));
+        try {
+          if (action.type === 'set') {
+            await setDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)), action.data, { merge: true });
+          } else if (action.type === 'delete') {
+            await deleteDoc(doc(db, 'appState', authUser.uid, action.collection, String(action.id)));
+          }
+        } catch {
+          remaining.push(action);
         }
       }
-      pendingWritesRef.current = [];
-      localStorage.removeItem('pharmaPendingWrites');
-      setPendingCount(0);
-      setCloudStatus('Sincronizado');
-      retryCountRef.current = 0;
+      pendingWritesRef.current = remaining;
+      localStorage.setItem('pharmaPendingWrites', JSON.stringify(remaining));
+      setPendingCount(remaining.length);
+      if (remaining.length === 0) {
+        localStorage.removeItem('pharmaPendingWrites');
+        setCloudStatus('Sincronizado');
+        setSyncError('');
+        retryCountRef.current = 0;
+      } else {
+        setCloudStatus('Sin conexion');
+        setSyncError('Algunos registros no pudieron sincronizarse.');
+        if (!retryTimeoutRef.current) {
+          const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
+          retryTimeoutRef.current = setTimeout(() => {
+            retryTimeoutRef.current = null;
+            retryCountRef.current += 1;
+            flushWriteQueue();
+          }, delayMs);
+        }
+      }
     } catch {
       setCloudStatus('Sin conexion');
-      if (!retryTimeoutRef.current) {
-        const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
-        retryTimeoutRef.current = setTimeout(() => {
-          retryTimeoutRef.current = null;
-          retryCountRef.current += 1;
-          flushWriteQueue();
-        }, delayMs);
-      }
     } finally {
       isFlushingRef.current = false;
     }
@@ -258,7 +271,7 @@ const App = () => {
             createdAtBackfillRef.current[name] = true;
             const backfillQuery = query(colRef, orderBy('__name__'), limit(8000));
             const backfillSnap = await getDocs(backfillQuery);
-            const batch = writeBatch(db);
+            let batch = writeBatch(db);
             let batchCount = 0;
             backfillSnap.docs.forEach((docSnap) => {
               const data = docSnap.data();
@@ -269,6 +282,7 @@ const App = () => {
               batchCount += 1;
               if (batchCount >= 450) {
                 batch.commit();
+                batch = writeBatch(db);
                 batchCount = 0;
               }
             });
@@ -279,15 +293,27 @@ const App = () => {
           const items = [];
           let lastDoc = null;
           while (items.length < 8000) {
-            const q = lastDoc
-              ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
-              : query(colRef, orderBy('createdAt', 'desc'), limit(500));
-            const snap = await getDocs(q);
-            if (snap.empty) break;
-            items.push(...snap.docs.map((d) => d.data()));
-            lastDoc = snap.docs[snap.docs.length - 1];
-            if (snap.docs.length < 500) break;
-            await delay(50);
+            try {
+              const q = lastDoc
+                ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
+                : query(colRef, orderBy('createdAt', 'desc'), limit(500));
+              const snap = await getDocs(q);
+              if (snap.empty) break;
+              items.push(...snap.docs.map((d) => d.data()));
+              lastDoc = snap.docs[snap.docs.length - 1];
+              if (snap.docs.length < 500) break;
+              await delay(50);
+            } catch {
+              const fallbackQuery = lastDoc
+                ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(500))
+                : query(colRef, orderBy('__name__'), limit(500));
+              const snap = await getDocs(fallbackQuery);
+              if (snap.empty) break;
+              items.push(...snap.docs.map((d) => d.data()));
+              lastDoc = snap.docs[snap.docs.length - 1];
+              if (snap.docs.length < 500) break;
+              await delay(50);
+            }
           }
           setter(items.slice(0, 8000));
         };
@@ -662,6 +688,11 @@ const App = () => {
               >
                 Reintentar
               </button>
+            )}
+            {syncError && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">
+                {syncError}
+              </span>
             )}
             {authUser && (
               <button
