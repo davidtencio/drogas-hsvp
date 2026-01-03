@@ -1588,6 +1588,7 @@ const App = () => {
                         name="pharmacist"
                         options={pharmacists}
                         defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
+                        required
                       />
                     </>
                   ) : (
