@@ -626,7 +626,21 @@ const App = () => {
             )}
             {authUser && (
               <button
-                onClick={() => signOut(auth)}
+                onClick={async () => {
+                  await signOut(auth);
+                  setTransactions([]);
+                  setExpedientes([]);
+                  setBitacora([]);
+                  setMedications(INITIAL_MEDICATIONS);
+                  setServices(INITIAL_SERVICES);
+                  setPharmacists(INITIAL_PHARMACISTS);
+                  setCondiciones(INITIAL_CONDICIONES);
+                  setSelectedMedId(INITIAL_MEDICATIONS[0].id);
+                  setPendingCount(0);
+                  setCloudStatus('Sin sesion');
+                  localStorage.removeItem('pharmaControlData');
+                  localStorage.removeItem('pharmaPendingWrites');
+                }}
                 className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
               >
                 Salir
