@@ -63,6 +63,7 @@ const App = () => {
   const [cloudLoading, setCloudLoading] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
+  const [partialLoad, setPartialLoad] = useState(false);
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -122,8 +123,10 @@ const App = () => {
   const enqueueWrite = (action) => {
     const next = [...(pendingWritesRef.current || []), action];
     pendingWritesRef.current = next;
-    localStorage.setItem('pharmaPendingWrites', JSON.stringify(next));
-    setPendingCount(next.length);
+    const capped = next.slice(0, 200);
+    pendingWritesRef.current = capped;
+    localStorage.setItem('pharmaPendingWrites', JSON.stringify(capped));
+    setPendingCount(capped.length);
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -171,11 +174,11 @@ const App = () => {
           const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
           retryTimeoutRef.current = setTimeout(() => {
             retryTimeoutRef.current = null;
-            retryCountRef.current += 1;
-            flushWriteQueue();
-          }, delayMs);
-        }
+          retryCountRef.current += 1;
+          flushWriteQueue();
+        }, delayMs);
       }
+    }
     } catch {
       setCloudStatus('Sin conexion');
     } finally {
@@ -297,7 +300,7 @@ const App = () => {
             let batchCount = 0;
             backfillSnap.docs.forEach((docSnap) => {
               const data = docSnap.data();
-              if (data.createdAt || data.updatedAt) return;
+              if (data.createdAt) return;
               const source = data[dateField];
               const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
               batch.set(docSnap.ref, { createdAt, updatedAt: Date.now() }, { merge: true });
@@ -314,6 +317,7 @@ const App = () => {
           }
           const items = [];
           let lastDoc = null;
+          let usedFallback = false;
           while (items.length < 8000) {
             try {
               const q = lastDoc
@@ -326,6 +330,7 @@ const App = () => {
               if (snap.docs.length < 500) break;
               await delay(50);
             } catch {
+              usedFallback = true;
               const fallbackQuery = lastDoc
                 ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(500))
                 : query(colRef, orderBy('__name__'), limit(500));
@@ -338,16 +343,16 @@ const App = () => {
             }
           }
           setter(items.slice(0, 8000));
-          return items;
+          return { items, usedFallback };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
           loadCollection('transactions', setTransactions, 'date'),
           loadCollection('expedientes', setExpedientes, 'fecha'),
           loadCollection('bitacora', setBitacora, 'fecha'),
         ]);
-        if (!transactionsLoaded || !expedientesLoaded || !bitacoraLoaded) {
-          setCloudStatus('Sin conexion');
-        }
+        setPartialLoad(
+          transactionsLoaded.usedFallback || expedientesLoaded.usedFallback || bitacoraLoaded.usedFallback,
+        );
       } catch {
         try {
           const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
@@ -366,6 +371,7 @@ const App = () => {
         if (!cancelled) {
           setCloudReady(true);
           if (syncError) setCloudStatus('Sin conexion');
+          else if (partialLoad) setCloudStatus('Carga parcial');
           else setCloudStatus('Sincronizado');
           setCloudLoading(false);
         }
@@ -698,7 +704,9 @@ const App = () => {
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                   : cloudStatus === 'Sin conexion'
                     ? 'border-rose-200 bg-rose-50 text-rose-700'
-                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                    : cloudStatus === 'Carga parcial'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-600'
               }`}
             >
               {cloudStatus}
@@ -727,6 +735,20 @@ const App = () => {
                 className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
               >
                 Ver Log
+              </button>
+            )}
+            {syncErrors.length > 0 && (
+              <button
+                onClick={() => {
+                  pendingWritesRef.current = [];
+                  setPendingCount(0);
+                  setSyncErrors([]);
+                  setSyncError('');
+                  localStorage.removeItem('pharmaPendingWrites');
+                }}
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
+              >
+                Limpiar Cola
               </button>
             )}
             {authUser && (
