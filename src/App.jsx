@@ -1005,6 +1005,28 @@ const App = () => {
         id: toCatalogId(newCondition),
         data: { id: toCatalogId(newCondition), name: newCondition, createdAt: Date.now() },
       });
+    } else if (modalType === 'reintegro') {
+      const rxQuantity = 0;
+      const rxType = 'CERRADA';
+      const medId = formData.get('medicationId');
+      const prescription = toUpper(formData.get('motivo'));
+      const newTransaction = {
+        id: Date.now(),
+        date: now,
+        createdAt: Date.now(),
+        medId,
+        type: 'IN',
+        amount: parseInt(formData.get('amount'), 10),
+        service: 'REINTEGRO',
+        cama: '',
+        prescription, // Storing the "Reason/Motivo" in the prescription field as planned
+        rxType,
+        rxQuantity,
+        rxUsed: 0,
+        pharmacist: toUpper(formData.get('farmaceutico') || pharmacists[0] || ''),
+      };
+      setTransactions([newTransaction, ...transactions]);
+      enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
     }
     setShowModal(false);
     setEditingMedId(null);
@@ -1536,6 +1558,16 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => {
+                      setModalType('reintegro');
+                      setShowCatalogMenu(false);
+                      setShowModal(true);
+                    }}
+                    className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-700"
+                  >
+                    Reintegro
+                  </button>
+                  <button
+                    onClick={() => {
                       setEditingMedId(selectedMedId);
                       setModalType('med-edit');
                       setIsQuickIngreso(false);
@@ -1967,7 +1999,9 @@ const App = () => {
                                           ? 'Nueva Condicion'
                                           : modalType === 'condition-manage'
                                             ? 'Eliminar Condicion'
-                                            : 'Nuevo Medicamento'}
+                                            : modalType === 'reintegro'
+                                              ? 'Reintegro de Medicamento'
+                                              : 'Nuevo Medicamento'}
               </h3>
               <button
                 onClick={() => {
@@ -2166,6 +2200,22 @@ const App = () => {
                       />
                     </>
                   )}
+                </>
+              ) : modalType === 'reintegro' ? (
+                <>
+                  <SelectLabel
+                    label="Medicamento"
+                    name="medicationId"
+                    options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
+                    isObject
+                    defaultValue={selectedMedId}
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <InputLabel label="Cantidad a Reintegrar" name="amount" type="number" required />
+                    <div />
+                  </div>
+                  <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
+                  <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
                 </>
               ) : modalType === 'sync-log' ? (
                 <div className="space-y-3">
