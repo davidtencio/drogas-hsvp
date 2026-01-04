@@ -144,6 +144,29 @@ const App = () => {
     const num = parseFloat(normalized);
     return Number.isFinite(num) ? num : 0;
   };
+
+  const getRxProgress = (t) => {
+    if (t.rxType !== 'ABIERTA') return '';
+    const matches = transactions.filter(
+      (x) =>
+        x.medId === t.medId &&
+        x.prescription === t.prescription &&
+        x.type === 'OUT' &&
+        x.rxType === 'ABIERTA'
+    );
+    const sorted = matches.sort((a, b) => {
+      const timeA = a.createdAt || parseDateTime(a.date)?.getTime() || 0;
+      const timeB = b.createdAt || parseDateTime(b.date)?.getTime() || 0;
+      return timeA - timeB || a.id - b.id;
+    });
+    let sum = 0;
+    for (const m of sorted) {
+      sum += m.amount;
+      if (m.id === t.id) break;
+    }
+    return `${sum} de ${t.rxQuantity}`;
+  };
+
   const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
     const matches = items.filter(
       (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
@@ -1651,7 +1674,9 @@ const App = () => {
                             className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
                             title="Registrar nuevo rebajo"
                           >
-                            {t.rxUsed || 0} de {t.rxQuantity}
+                            title="Registrar nuevo rebajo"
+                          >
+                            {getRxProgress(t)}
                           </button>
                         ) : (
                           <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
@@ -1766,7 +1791,7 @@ const App = () => {
                               className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
                               title="Registrar nuevo rebajo"
                             >
-                              {t.rxUsed || 0} de {t.rxQuantity}
+                              {getRxProgress(t)}
                             </button>
                           ) : (
                             <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
