@@ -1674,8 +1674,6 @@ const App = () => {
                             className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
                             title="Registrar nuevo rebajo"
                           >
-                            title="Registrar nuevo rebajo"
-                          >
                             {getRxProgress(t)}
                           </button>
                         ) : (
