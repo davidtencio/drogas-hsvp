@@ -12,6 +12,7 @@ import {
   History,
   Package,
   PlusCircle,
+  Search,
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
@@ -116,6 +117,7 @@ const App = () => {
   const retryCountRef = useRef(0);
   const createdAtBackfillRef = useRef({});
   const kardexSearchRef = useRef(null);
+  const [auditoriaSearch, setAuditoriaSearch] = useState('');
   const ORG_ID = 'hsvp';
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
 
@@ -808,6 +810,29 @@ const App = () => {
     });
   }, [expedientes]);
 
+  const filteredExpedientes = useMemo(() => {
+    const searchValue = toUpper(auditoriaSearch);
+    let items = [...sortedExpedientes];
+    if (searchValue) {
+      items = items.filter((e) => {
+        const haystack = [
+          e.fecha,
+          e.servicio,
+          e.receta,
+          e.cedula,
+          e.medicamento,
+          e.dosis,
+          e.condicion,
+          e.farmaceutico,
+        ]
+          .filter(Boolean)
+          .join(' ');
+        return toUpper(haystack).includes(searchValue);
+      });
+    }
+    return items;
+  }, [sortedExpedientes, auditoriaSearch]);
+
   const sortedBitacora = useMemo(() => {
     return [...bitacora].sort((a, b) => {
       const aTime = a.createdAt ?? parseDateTime(a.fecha)?.getTime() ?? 0;
@@ -859,13 +884,20 @@ const App = () => {
 
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
-  const auditoriaPageData = useMemo(() => paginate(sortedExpedientes, auditoriaPage), [sortedExpedientes, auditoriaPage]);
+  const auditoriaPageData = useMemo(() => paginate(filteredExpedientes, auditoriaPage), [filteredExpedientes, auditoriaPage]);
   const bitacoraPageData = useMemo(() => paginate(sortedBitacora, bitacoraPage), [sortedBitacora, bitacoraPage]);
 
   const handleSave = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const now = new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16);
+    const now = new Date().toLocaleString('es-CR', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+    });
 
     if (modalType === 'kardex') {
       const rxType = isQuickIngreso ? 'CERRADA' : formData.get('rxType');
@@ -1863,6 +1895,18 @@ const App = () => {
 
         {activeTab === 'auditoria' && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center bg-slate-50/50">
+              <div className="relative w-full max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input
+                  type="text"
+                  placeholder="Buscar expedientes..."
+                  value={auditoriaSearch}
+                  onChange={(e) => setAuditoriaSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                />
+              </div>
+            </div>
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
