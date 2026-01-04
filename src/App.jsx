@@ -982,6 +982,24 @@ const App = () => {
       };
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
       enqueueWrite({ type: 'set', collection: 'expedientes', id: updated.id, data: updated });
+    } else if (modalType === 'auditoria-rate-change') {
+      const parent = expedientes.find((e) => e.id === editingExpedienteId);
+      if (parent) {
+        const newRate = formData.get('new_rate');
+        const newDuration = formData.get('new_duration');
+        const newDosis = `CAMBIO VELOCIDAD: ${newRate} CC/HR - NUEVA DURACION: ${newDuration} HRS`;
+        const newEntry = {
+          ...parent,
+          id: Date.now(),
+          fecha: now,
+          createdAt: Date.now(),
+          dosis: toUpper(newDosis),
+          condicion: 'CAMBIO VELOCIDAD INFUSION',
+          farmaceutico: toUpper(formData.get('farmaceutico')),
+        };
+        setExpedientes([newEntry, ...expedientes]);
+        enqueueWrite({ type: 'set', collection: 'expedientes', id: newEntry.id, data: newEntry });
+      }
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
       const newCierre = {
@@ -1952,6 +1970,19 @@ const App = () => {
                         >
                           Editar
                         </button>
+                        {e.dosis && e.dosis.toString().startsWith('INFUSION') && (
+                          <button
+                            onClick={() => {
+                              setEditingExpedienteId(e.id);
+                              setModalType('auditoria-rate-change');
+                              setShowModal(true);
+                            }}
+                            className="bg-blue-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700 flex items-center justify-center"
+                            title="Registrar Cambio de Velocidad"
+                          >
+                            <PlusCircle size={14} />
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             const confirmDelete = window.confirm(
@@ -2055,29 +2086,31 @@ const App = () => {
                       ? 'Editar Movimiento'
                       : modalType === 'auditoria-edit'
                         ? 'Editar Expediente'
-                        : modalType === 'bitacora'
-                          ? 'Nuevo Registro de Bitacora'
-                          : modalType === 'cierre'
-                            ? 'Cierre de Inventario'
-                            : modalType === 'sync-log'
-                              ? 'Log de Sincronizacion'
-                              : modalType === 'med-edit'
-                                ? 'Editar Medicamento'
-                                : modalType === 'service-add'
-                                  ? 'Nuevo Servicio'
-                                  : modalType === 'service-manage'
-                                    ? 'Eliminar Servicio'
-                                    : modalType === 'pharmacist-add'
-                                      ? 'Nuevo Farmaceutico'
-                                      : modalType === 'pharmacist-manage'
-                                        ? 'Eliminar Farmaceutico'
-                                        : modalType === 'condition-add'
-                                          ? 'Nueva Condicion'
-                                          : modalType === 'condition-manage'
-                                            ? 'Eliminar Condicion'
-                                            : modalType === 'reintegro'
-                                              ? 'Reintegro de Medicamento'
-                                              : 'Nuevo Medicamento'}
+                        : modalType === 'auditoria-rate-change'
+                          ? 'Cambio de Velocidad Infusion'
+                          : modalType === 'bitacora'
+                            ? 'Nuevo Registro de Bitacora'
+                            : modalType === 'cierre'
+                              ? 'Cierre de Inventario'
+                              : modalType === 'sync-log'
+                                ? 'Log de Sincronizacion'
+                                : modalType === 'med-edit'
+                                  ? 'Editar Medicamento'
+                                  : modalType === 'service-add'
+                                    ? 'Nuevo Servicio'
+                                    : modalType === 'service-manage'
+                                      ? 'Eliminar Servicio'
+                                      : modalType === 'pharmacist-add'
+                                        ? 'Nuevo Farmaceutico'
+                                        : modalType === 'pharmacist-manage'
+                                          ? 'Eliminar Farmaceutico'
+                                          : modalType === 'condition-add'
+                                            ? 'Nueva Condicion'
+                                            : modalType === 'condition-manage'
+                                              ? 'Eliminar Condicion'
+                                              : modalType === 'reintegro'
+                                                ? 'Reintegro de Medicamento'
+                                                : 'Nuevo Medicamento'}
               </h3>
               <button
                 onClick={() => {
@@ -2205,6 +2238,49 @@ const App = () => {
                       defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
                     />
                   </div>
+                </>
+              ) : modalType === 'auditoria-rate-change' ? (
+                <>
+                  <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 flex flex-col gap-2 mb-4">
+                    <p className="text-xs font-bold text-slate-700">
+                      PACIENTE: <span className="text-blue-600">{expedientes.find((e) => e.id === editingExpedienteId)?.cedula}</span>
+                    </p>
+                    <p className="text-xs font-bold text-slate-700">
+                      HUMANO: <span className="text-blue-600">{expedientes.find((e) => e.id === editingExpedienteId)?.medicamento}</span>
+                    </p>
+                    <p className="text-[10px] text-slate-500 uppercase">
+                      DOSIS ACTUAL: {expedientes.find((e) => e.id === editingExpedienteId)?.dosis}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Nueva Velocidad (cc/hr)</label>
+                      <input
+                        name="new_rate"
+                        type="number"
+                        step="0.1"
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                        required
+                        autoFocus
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Nueva Duracion (hr)</label>
+                      <input
+                        name="new_duration"
+                        type="number"
+                        step="0.5"
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <SelectLabel
+                    label="Farmaceutico"
+                    name="farmaceutico"
+                    options={pharmacists}
+                    defaultValue={pharmacists[0]}
+                  />
                 </>
               ) : modalType === 'cierre' ? (
                 <>
