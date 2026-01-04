@@ -75,6 +75,7 @@ const App = () => {
   const [kardexHistoricPage, setKardexHistoricPage] = useState(1);
   const [auditoriaPage, setAuditoriaPage] = useState(1);
   const [bitacoraPage, setBitacoraPage] = useState(1);
+  const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
   // Data States moved up
   const [transactions, setTransactions] = useState([
     {
@@ -921,7 +922,10 @@ const App = () => {
         cedula: toUpper(formData.get('cedula')),
         receta: toUpper(formData.get('receta')),
         medicamento: toUpper(formData.get('medicamento')),
-        dosis: toUpper(formData.get('dosis')),
+        dosis:
+          dosisType === 'INFUSION'
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')}cc A ${formData.get('inf_vel')}cc/hr POR ${formData.get('inf_dur')} HR`
+            : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
@@ -937,7 +941,10 @@ const App = () => {
         cedula: toUpper(formData.get('cedula')),
         receta: toUpper(formData.get('receta')),
         medicamento: toUpper(formData.get('medicamento')),
-        dosis: toUpper(formData.get('dosis')),
+        dosis:
+          dosisType === 'INFUSION'
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')}cc A ${formData.get('inf_vel')}cc/hr POR ${formData.get('inf_dur')} HR`
+            : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
@@ -1056,6 +1063,7 @@ const App = () => {
     setEditingTransactionId(null);
     setEditingExpedienteId(null);
     setRxTypeValue('CERRADA');
+    setDosisType('UNICA');
   };
 
   const getKardexRowClass = (t) => {
@@ -1366,6 +1374,7 @@ const App = () => {
                 setIsQuickIngreso(false);
                 setShowCatalogMenu(false);
                 setRxTypeValue('CERRADA');
+                setDosisType('UNICA');
                 setShowModal(true);
               }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm active:scale-95"
@@ -2035,6 +2044,7 @@ const App = () => {
                   setPrefillKardexType('');
                   setIsQuickIngreso(false);
                   setRxTypeValue('CERRADA');
+                  setDosisType('UNICA');
                 }}
                 className="text-slate-400 hover:text-slate-600"
               >
@@ -2081,368 +2091,415 @@ const App = () => {
                     options={sortedMedications.map((m) => m.name)}
                     defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.medicamento || sortedMedications[0]?.name}
                   />
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Dosis y Via</label>
-                    <textarea
-                      name="dosis"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-20"
-                      required
-                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.dosis || ''}
-                    ></textarea>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <SelectLabel
-                      label="Condicion"
-                      name="condicion"
-                      options={condiciones}
-                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.condicion || condiciones[0]}
-                    />
-                    <SelectLabel
-                      label="Farmaceutico"
-                      name="farmaceutico"
-                      options={pharmacists}
-                      defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
-                    />
-                  </div>
-                </>
-              ) : modalType === 'cierre' ? (
-                <>
-                  <SelectLabel
-                    label="Turno"
-                    name="turno"
-                    options={['SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+                  defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.medicamento || sortedMedications[0]?.name}
                   />
-                  <div className="grid grid-cols-2 gap-4">
-                    <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
-                    <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Configuracion Dosis</label>
+                    <div className="flex bg-slate-100 p-1 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setDosisType('UNICA')}
+                        className={`flex-1 text-xs font-bold py-1.5 rounded-md transition-all ${dosisType === 'UNICA' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                          }`}
+                      >
+                        Dosis Unica
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDosisType('INFUSION')}
+                        className={`flex-1 text-xs font-bold py-1.5 rounded-md transition-all ${dosisType === 'INFUSION' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                          }`}
+                      >
+                        Infusion Continua
+                      </button>
+                    </div>
                   </div>
-                  <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
-                </>
-              ) : modalType === 'bitacora' ? (
-                <>
-                  <SelectLabel label="Servicio" name="servicio" options={services} />
-                  <InputLabel label="Titulo" name="titulo" required />
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Detalle</label>
-                    <textarea
-                      name="detalle"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-24"
-                      required
-                    ></textarea>
-                  </div>
-                  <SelectLabel label="Responsable" name="responsable" options={pharmacists} />
-                </>
-              ) : modalType === 'kardex' || modalType === 'kardex-edit' ? (
-                <>
-                  <SelectLabel
-                    label="Medicamento"
-                    name="medicationId"
-                    options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
-                    isObject
-                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.medId || selectedMedId}
-                  />
-                  {isQuickIngreso ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-4">
-                        <InputLabel
-                          label="Cantidad"
-                          name="amount"
-                          type="number"
-                          required
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
-                        />
-                        <div />
-                      </div>
-                      <SelectLabel
-                        label="Farmaceutico"
-                        name="pharmacist"
-                        options={pharmacists}
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
+
+                  {dosisType === 'UNICA' ? (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Dosis y Via</label>
+                      <textarea
+                        name="dosis"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-20"
                         required
-                      />
-                    </>
+                        defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.dosis || ''}
+                      ></textarea>
+                    </div>
                   ) : (
-                    <>
-                      <div className="grid grid-cols-2 gap-4">
-                        <SelectLabel
-                          label="Tipo de Receta"
-                          name="rxType"
-                          options={[
-                            { value: 'CERRADA', label: 'Cerrada' },
-                            { value: 'ABIERTA', label: 'Abierta' },
-                          ]}
-                          isObject
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
-                          onChange={(e) => setRxTypeValue(e.target.value)}
-                        />
-                        {rxTypeValue === 'ABIERTA' ? (
-                          <InputLabel
-                            label="Cantidad Receta"
-                            name="rxQuantity"
-                            type="number"
-                            required
-                            defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
-                          />
-                        ) : (
-                          <div />
-                        )}
+                    <div className="grid grid-cols-4 gap-2 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Ampollas</label>
+                        <input name="inf_amps" type="number" step="0.5" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" required />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <InputLabel
-                          label="Cantidad"
-                          name="amount"
-                          type="number"
-                          required
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
-                        />
-                        <div />
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Diluyente (cc)</label>
+                        <input name="inf_vol" type="number" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" required />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <SelectLabel
-                          label="Servicio"
-                          name="service"
-                          options={services}
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.service || services[0]}
-                        />
-                        <InputLabel
-                          label="Cama"
-                          name="cama"
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.cama || ''}
-                        />
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Velocidad (cc/hr)</label>
+                        <input name="inf_vel" type="number" step="0.1" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" required />
                       </div>
-                      <InputLabel
-                        label="N Receta / Comprobante"
-                        name="prescription"
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
-                      />
-                      <SelectLabel
-                        label="Farmaceutico"
-                        name="pharmacist"
-                        options={pharmacists}
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
-                      />
-                    </>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Duracion (hr)</label>
+                        <input name="inf_dur" type="number" step="0.5" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" required />
+                      </div>
+                    </div>
+                    </div>
                   )}
-                </>
-              ) : modalType === 'reintegro' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <SelectLabel
+                  label="Condicion"
+                  name="condicion"
+                  options={condiciones}
+                  defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.condicion || condiciones[0]}
+                />
+                <SelectLabel
+                  label="Farmaceutico"
+                  name="farmaceutico"
+                  options={pharmacists}
+                  defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.farmaceutico || pharmacists[0]}
+                />
+              </div>
+            </>
+            ) : modalType === 'cierre' ? (
+            <>
+              <SelectLabel
+                label="Turno"
+                name="turno"
+                options={['SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
+                <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
+              </div>
+              <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
+            </>
+            ) : modalType === 'bitacora' ? (
+            <>
+              <SelectLabel label="Servicio" name="servicio" options={services} />
+              <InputLabel label="Titulo" name="titulo" required />
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Detalle</label>
+                <textarea
+                  name="detalle"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-24"
+                  required
+                ></textarea>
+              </div>
+              <SelectLabel label="Responsable" name="responsable" options={pharmacists} />
+            </>
+            ) : modalType === 'kardex' || modalType === 'kardex-edit' ? (
+            <>
+              <SelectLabel
+                label="Medicamento"
+                name="medicationId"
+                options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
+                isObject
+                defaultValue={transactions.find((t) => t.id === editingTransactionId)?.medId || selectedMedId}
+              />
+              {isQuickIngreso ? (
                 <>
-                  <SelectLabel
-                    label="Medicamento"
-                    name="medicationId"
-                    options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
-                    isObject
-                    defaultValue={selectedMedId}
-                  />
                   <div className="grid grid-cols-2 gap-4">
-                    <InputLabel label="Cantidad a Reintegrar" name="amount" type="number" required />
+                    <InputLabel
+                      label="Cantidad"
+                      name="amount"
+                      type="number"
+                      required
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                    />
                     <div />
                   </div>
-                  <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
-                  <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
-                </>
-              ) : modalType === 'sync-log' ? (
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-500">Ultimos errores de sincronizacion (max 50).</p>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {syncErrors.map((err, idx) => (
-                      <div key={`${err.id}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                        <span className="text-xs font-bold text-slate-700">
-                          [{err.time}] {err.collection}/{err.id} ({err.type})
-                        </span>
-                      </div>
-                    ))}
-                    {syncErrors.length === 0 && <p className="text-xs text-slate-400">Sin errores registrados.</p>}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
-                  >
-                    Cerrar
-                  </button>
-                </div>
-              ) : modalType === 'service-add' ? (
-                <>
-                  <InputLabel label="Nombre del Servicio" name="serviceName" required />
-                </>
-              ) : modalType === 'pharmacist-add' ? (
-                <>
-                  <InputLabel label="Nombre del Farmaceutico" name="pharmacistName" required />
-                </>
-              ) : modalType === 'service-manage' ? (
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-500">Eliminar un servicio no afecta el historial.</p>
-                  <InputLabel
-                    label="Buscar"
-                    name="catalogSearch"
-                    value={catalogSearch}
-                    onChange={(e) => setCatalogSearch(e.target.value)}
+                  <SelectLabel
+                    label="Farmaceutico"
+                    name="pharmacist"
+                    options={pharmacists}
+                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
+                    required
                   />
-                  <div className="space-y-2">
-                    {services
-                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
-                      .map((name) => (
-                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                          <span className="text-xs font-bold text-slate-700">{name}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
-                              if (!confirmDelete) return;
-                              setServices(services.filter((s) => s !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
-                            }}
-                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
-                  >
-                    Cerrar
-                  </button>
-                </div>
-              ) : modalType === 'condition-add' ? (
-                <>
-                  <InputLabel label="Nombre de la Condicion" name="conditionName" required />
                 </>
-              ) : modalType === 'pharmacist-manage' ? (
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-500">Eliminar un farmaceutico no afecta el historial de rebajos.</p>
-                  <InputLabel
-                    label="Buscar"
-                    name="catalogSearch"
-                    value={catalogSearch}
-                    onChange={(e) => setCatalogSearch(e.target.value)}
-                  />
-                  <div className="space-y-2">
-                    {pharmacists
-                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
-                      .map((name) => (
-                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                          <span className="text-xs font-bold text-slate-700">{name}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
-                              if (!confirmDelete) return;
-                              setPharmacists(pharmacists.filter((p) => p !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
-                            }}
-                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
-                  >
-                    Cerrar
-                  </button>
-                </div>
-              ) : modalType === 'condition-manage' ? (
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-500">Eliminar una condicion no afecta el historial.</p>
-                  <InputLabel
-                    label="Buscar"
-                    name="catalogSearch"
-                    value={catalogSearch}
-                    onChange={(e) => setCatalogSearch(e.target.value)}
-                  />
-                  <div className="space-y-2">
-                    {condiciones
-                      .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
-                      .map((name) => (
-                        <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                          <span className="text-xs font-bold text-slate-700">{name}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
-                              if (!confirmDelete) return;
-                              setCondiciones(condiciones.filter((c) => c !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
-                            }}
-                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
-                  >
-                    Cerrar
-                  </button>
-                </div>
               ) : (
                 <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <SelectLabel
+                      label="Tipo de Receta"
+                      name="rxType"
+                      options={[
+                        { value: 'CERRADA', label: 'Cerrada' },
+                        { value: 'ABIERTA', label: 'Abierta' },
+                      ]}
+                      isObject
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxType || 'CERRADA'}
+                      onChange={(e) => setRxTypeValue(e.target.value)}
+                    />
+                    {rxTypeValue === 'ABIERTA' ? (
+                      <InputLabel
+                        label="Cantidad Receta"
+                        name="rxQuantity"
+                        type="number"
+                        required
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.rxQuantity || ''}
+                      />
+                    ) : (
+                      <div />
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <InputLabel
+                      label="Cantidad"
+                      name="amount"
+                      type="number"
+                      required
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                    />
+                    <div />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <SelectLabel
+                      label="Servicio"
+                      name="service"
+                      options={services}
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.service || services[0]}
+                    />
+                    <InputLabel
+                      label="Cama"
+                      name="cama"
+                      defaultValue={transactions.find((t) => t.id === editingTransactionId)?.cama || ''}
+                    />
+                  </div>
                   <InputLabel
-                    label="Nombre del Medicamento"
-                    name="medName"
-                    required
-                    defaultValue={medications.find((m) => m.id === editingMedId)?.name || ''}
+                    label="N Receta / Comprobante"
+                    name="prescription"
+                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
                   />
                   <SelectLabel
-                    label="Tipo"
-                    name="medType"
-                    options={MED_TYPES}
-                    defaultValue={medications.find((m) => m.id === editingMedId)?.type || MED_TYPES[0]}
-                  />
-                  <InputLabel
-                    label="Precio Unitario (CRC)"
-                    name="unitPrice"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0,00"
-                    defaultValue={formatCurrency(medications.find((m) => m.id === editingMedId)?.unitPrice ?? '')}
-                    onFocus={(e) => {
-                      const value = e.target.value;
-                      if (!value) return;
-                      e.target.value = value.replace(/\./g, '').replace(',', '.');
-                    }}
-                    onBlur={(e) => {
-                      const value = e.target.value;
-                      if (!value) return;
-                      e.target.value = formatCurrency(parseCurrency(value));
-                    }}
-                  />
-                  <InputLabel
-                    label="Cuota"
-                    name="quota"
-                    type="number"
-                    defaultValue={medications.find((m) => m.id === editingMedId)?.quota ?? ''}
+                    label="Farmaceutico"
+                    name="pharmacist"
+                    options={pharmacists}
+                    defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
                   />
                 </>
               )}
-              {modalType !== 'pharmacist-manage' &&
-                modalType !== 'condition-manage' &&
-                modalType !== 'service-manage' &&
-                modalType !== 'sync-log' && (
-                  <button
-                    type="submit"
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
-                  >
-                    Guardar Registro
-                  </button>
-                )}
-            </form>
-          </div>
+            </>
+            ) : modalType === 'reintegro' ? (
+            <>
+              <SelectLabel
+                label="Medicamento"
+                name="medicationId"
+                options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
+                isObject
+                defaultValue={selectedMedId}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <InputLabel label="Cantidad a Reintegrar" name="amount" type="number" required />
+                <div />
+              </div>
+              <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
+              <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
+            </>
+            ) : modalType === 'sync-log' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">Ultimos errores de sincronizacion (max 50).</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {syncErrors.map((err, idx) => (
+                  <div key={`${err.id}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="text-xs font-bold text-slate-700">
+                      [{err.time}] {err.collection}/{err.id} ({err.type})
+                    </span>
+                  </div>
+                ))}
+                {syncErrors.length === 0 && <p className="text-xs text-slate-400">Sin errores registrados.</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+              >
+                Cerrar
+              </button>
+            </div>
+            ) : modalType === 'service-add' ? (
+            <>
+              <InputLabel label="Nombre del Servicio" name="serviceName" required />
+            </>
+            ) : modalType === 'pharmacist-add' ? (
+            <>
+              <InputLabel label="Nombre del Farmaceutico" name="pharmacistName" required />
+            </>
+            ) : modalType === 'service-manage' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">Eliminar un servicio no afecta el historial.</p>
+              <InputLabel
+                label="Buscar"
+                name="catalogSearch"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+              <div className="space-y-2">
+                {services
+                  .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                  .map((name) => (
+                    <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-bold text-slate-700">{name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
+                          if (!confirmDelete) return;
+                          setServices(services.filter((s) => s !== name));
+                          enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
+                        }}
+                        className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+              >
+                Cerrar
+              </button>
+            </div>
+            ) : modalType === 'condition-add' ? (
+            <>
+              <InputLabel label="Nombre de la Condicion" name="conditionName" required />
+            </>
+            ) : modalType === 'pharmacist-manage' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">Eliminar un farmaceutico no afecta el historial de rebajos.</p>
+              <InputLabel
+                label="Buscar"
+                name="catalogSearch"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+              <div className="space-y-2">
+                {pharmacists
+                  .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                  .map((name) => (
+                    <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-bold text-slate-700">{name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
+                          if (!confirmDelete) return;
+                          setPharmacists(pharmacists.filter((p) => p !== name));
+                          enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
+                        }}
+                        className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+              >
+                Cerrar
+              </button>
+            </div>
+            ) : modalType === 'condition-manage' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">Eliminar una condicion no afecta el historial.</p>
+              <InputLabel
+                label="Buscar"
+                name="catalogSearch"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+              <div className="space-y-2">
+                {condiciones
+                  .filter((name) => toUpper(name).includes(toUpper(catalogSearch)))
+                  .map((name) => (
+                    <div key={name} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-bold text-slate-700">{name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
+                          if (!confirmDelete) return;
+                          setCondiciones(condiciones.filter((c) => c !== name));
+                          enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
+                        }}
+                        className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-slate-800 transition-all uppercase tracking-widest mt-4"
+              >
+                Cerrar
+              </button>
+            </div>
+            ) : (
+            <>
+              <InputLabel
+                label="Nombre del Medicamento"
+                name="medName"
+                required
+                defaultValue={medications.find((m) => m.id === editingMedId)?.name || ''}
+              />
+              <SelectLabel
+                label="Tipo"
+                name="medType"
+                options={MED_TYPES}
+                defaultValue={medications.find((m) => m.id === editingMedId)?.type || MED_TYPES[0]}
+              />
+              <InputLabel
+                label="Precio Unitario (CRC)"
+                name="unitPrice"
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
+                defaultValue={formatCurrency(medications.find((m) => m.id === editingMedId)?.unitPrice ?? '')}
+                onFocus={(e) => {
+                  const value = e.target.value;
+                  if (!value) return;
+                  e.target.value = value.replace(/\./g, '').replace(',', '.');
+                }}
+                onBlur={(e) => {
+                  const value = e.target.value;
+                  if (!value) return;
+                  e.target.value = formatCurrency(parseCurrency(value));
+                }}
+              />
+              <InputLabel
+                label="Cuota"
+                name="quota"
+                type="number"
+                defaultValue={medications.find((m) => m.id === editingMedId)?.quota ?? ''}
+              />
+            </>
+              )}
+            {modalType !== 'pharmacist-manage' &&
+              modalType !== 'condition-manage' &&
+              modalType !== 'service-manage' &&
+              modalType !== 'sync-log' && (
+                <button
+                  type="submit"
+                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
+                >
+                  Guardar Registro
+                </button>
+              )}
+          </form>
         </div>
-      )}
-    </div>
+        </div>
+  )
+}
+    </div >
   );
 };
 
