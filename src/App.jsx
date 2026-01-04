@@ -40,6 +40,8 @@ const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRES
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
 
+const MAX_RECORDS = 5000;
+
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [medications, setMedications] = useState(INITIAL_MEDICATIONS);
@@ -465,7 +467,7 @@ const App = () => {
           let lastDoc = null;
           let usedFallback = false;
           let hadError = false;
-          while (items.length < 8000) {
+          while (items.length < MAX_RECORDS) {
             try {
               const q = lastDoc
                 ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
@@ -494,7 +496,7 @@ const App = () => {
               }
             }
           }
-          setter(items.slice(0, 8000));
+          setter(items.slice(0, MAX_RECORDS));
           return { items, usedFallback, hadError };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
@@ -575,6 +577,129 @@ const App = () => {
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
+
+  const handleRollover = async () => {
+    if (!window.confirm('Se ha alcanzado el limite de seguridad de registros. El sistema debe realizar un cierre de periodo automatico.\n\nEsto descargara un respaldo, limpiara el historial y mantendra los saldos actuales.\n\n¿Desea proceder?')) {
+      return;
+    }
+
+    setCloudStatus('Realizando Cierre...');
+
+    try {
+      // 1. Backup Data
+      const backupData = {
+        date: new Date().toISOString(),
+        transactions,
+        expedientes,
+        bitacora,
+        medications,
+        services,
+        pharmacists,
+        condiciones
+      };
+
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `backup_farmacia_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // 2. Calculate Carry-Over Stocks
+      const carryOverTransactions = sortedMedications.map(med => {
+        const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
+        const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
+
+        if (stock <= 0) return null;
+
+        return {
+          id: Date.now() + Math.random(),
+          date: new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16),
+          createdAt: Date.now(),
+          medId: med.id,
+          type: 'IN',
+          amount: stock,
+          service: 'SALDO INICIAL',
+          cama: '',
+          prescription: 'Cierre Periodo',
+          rxType: 'CERRADA',
+          rxQuantity: 0,
+          rxUsed: 0,
+          pharmacist: 'SISTEMA',
+        };
+      }).filter(Boolean);
+
+      // 3. Wipe & Batch Initialize
+      // We'll trust the sync queue to handle the cloud deletes if we just clear local state 
+      // BUT for safety/speed with big data, we might want to let the user know this is happening.
+      // Since our sync relies on pendingWrites, deleting 5000 items one by one is too heavy.
+      // A better approach for the cloud is to rely on the fact that we can just start fresh collections or
+      // let the user know. 
+      // However, to keep it simple with existing architecture:
+      // We will clear the local arrays and enqueue "set" for the new ones.
+      // Deleting 5000 docs via the queue might be slow. 
+      // Ideally, we'd use a cloud function, but we don't have one.
+      // So we will just RESET the local state and let the new "startup" be fresh.
+      // The old data remains in Firebase until manually cleaned or we implement a background cleaner.
+      // OR specifically for this app, we can just "forget" the old data by updating the state.
+      // IF we want to strictly delete from Firebase:
+      // We would need to batch delete. Let's try to batch delete top 500 recently loaded to be safe, 
+      // or just assume the backup is enough and we are "moving forward".
+
+      // DECISION: To avoid saturation, we MUST delete from Firebase.
+      // We will delete the collections using batching here directly.
+
+      const batchDelete = async (collectionName, items) => {
+        const chunks = [];
+        for (let i = 0; i < items.length; i += 500) {
+          chunks.push(items.slice(i, i + 500));
+        }
+
+        for (const chunk of chunks) {
+          const batch = writeBatch(db);
+          chunk.forEach(item => {
+            batch.delete(doc(db, dataDocPath, collectionName, String(item.id)));
+          });
+          await batch.commit();
+        }
+      };
+
+      await batchDelete('transactions', transactions);
+      await batchDelete('expedientes', expedientes);
+      await batchDelete('bitacora', bitacora);
+
+      // 4. Set New State
+      setTransactions(carryOverTransactions);
+      setExpedientes([]);
+      setBitacora([]);
+
+      // 5. Sync New Balances
+      carryOverTransactions.forEach(t => {
+        enqueueWrite({ type: 'set', collection: 'transactions', id: t.id, data: t });
+      });
+
+      alert('Cierre de periodo completado exitosamente. El sistema se ha reiniciado con los saldos actuales.');
+      window.location.reload(); // Reload to ensure clean state
+
+    } catch (error) {
+      console.error(error);
+      alert('Error durante el cierre de periodo. Por favor revise la consola y reporte al administrador.');
+    } finally {
+      setCloudStatus('Sincronizado');
+    }
+  };
+
+  useEffect(() => {
+    if (transactions.length >= MAX_RECORDS && cloudReady && authUser) {
+      // Add a small delay/debounce to avoid immediate trigger on load if just over limit
+      const timer = setTimeout(() => {
+        handleRollover();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [transactions.length, cloudReady, authUser]);
 
   // Computations
   const sortedMedications = useMemo(() => {
