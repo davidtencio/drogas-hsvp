@@ -924,7 +924,7 @@ const App = () => {
         medicamento: toUpper(formData.get('medicamento')),
         dosis:
           dosisType === 'INFUSION'
-            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')}cc A ${formData.get('inf_vel')}cc/hr POR ${formData.get('inf_dur')} HR`
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR POR ${formData.get('inf_dur')} HR`
             : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
@@ -943,7 +943,7 @@ const App = () => {
         medicamento: toUpper(formData.get('medicamento')),
         dosis:
           dosisType === 'INFUSION'
-            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')}cc A ${formData.get('inf_vel')}cc/hr POR ${formData.get('inf_dur')} HR`
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR POR ${formData.get('inf_dur')} HR`
             : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
