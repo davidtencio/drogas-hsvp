@@ -924,7 +924,7 @@ const App = () => {
         medicamento: toUpper(formData.get('medicamento')),
         dosis:
           dosisType === 'INFUSION'
-            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR POR ${formData.get('inf_dur')} HR`
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR DURACION: ${formData.get('inf_dur')} HRS`
             : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
@@ -943,7 +943,7 @@ const App = () => {
         medicamento: toUpper(formData.get('medicamento')),
         dosis:
           dosisType === 'INFUSION'
-            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR POR ${formData.get('inf_dur')} HR`
+            ? `INFUSION: ${formData.get('inf_amps')} AMPOLLAS EN ${formData.get('inf_vol')} CC A ${formData.get('inf_vel')} CC/HR DURACION: ${formData.get('inf_dur')} HRS`
             : toUpper(formData.get('dosis')),
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
@@ -2070,12 +2070,14 @@ const App = () => {
                       label="Cedula Paciente"
                       name="cedula"
                       required
+                      className="uppercase"
                       defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.cedula || ''}
                     />
                     <InputLabel
                       label="N Receta"
                       name="receta"
                       required
+                      className="uppercase"
                       defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.receta || ''}
                     />
                   </div>
@@ -2119,7 +2121,7 @@ const App = () => {
                       <label className="text-[10px] font-bold text-slate-500 uppercase">Dosis y Via</label>
                       <textarea
                         name="dosis"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-20"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none h-20 uppercase"
                         required
                         defaultValue={expedientes.find((e) => e.id === editingExpedienteId)?.dosis || ''}
                       ></textarea>
@@ -2528,10 +2530,10 @@ const StatSimple = ({ title, value, sub, icon, isAlert }) => (
   </div>
 );
 
-const InputLabel = ({ label, ...props }) => (
+const InputLabel = ({ label, className = '', ...props }) => (
   <div className="space-y-1">
     <label className="text-[10px] font-bold text-slate-500 uppercase">{label}</label>
-    <input {...props} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium" />
+    <input {...props} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium ${className}`} />
   </div>
 );
 
