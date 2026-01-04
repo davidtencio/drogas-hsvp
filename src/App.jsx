@@ -732,6 +732,50 @@ const App = () => {
     [currentInventory, expedientes],
   );
 
+  const kpiStats = useMemo(() => {
+    // 1. Service Consumption (Top 5)
+    const serviceConsumption = {};
+    transactions.forEach((t) => {
+      if (t.type === 'OUT' && t.service) {
+        serviceConsumption[t.service] = (serviceConsumption[t.service] || 0) + t.amount;
+      }
+    });
+    const topServices = Object.entries(serviceConsumption)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([name, value]) => ({ name, value }));
+
+    // 2. Intervention Rate
+    const totalExp = expedientes.length;
+    const issues = expedientes.filter((e) => ['INCONSISTENTE', 'SUSPENDIDA'].includes(e.condicion)).length;
+    const interventionRate = totalExp > 0 ? Math.round((issues / totalExp) * 100) : 0;
+
+    // 3. Daily Consumption Trend (Last 7 Days)
+    const today = new Date();
+    const trend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      trend.push({
+        date: d,
+        day: d.toLocaleDateString('es-CR', { weekday: 'short' }).slice(0, 3).toUpperCase(),
+        value: 0
+      });
+    }
+
+    transactions.forEach((t) => {
+      if (t.type !== 'OUT') return;
+      const tDate = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
+      if (!tDate) return;
+      const entry = trend.find((d) => d.date.toDateString() === tDate.toDateString());
+      if (entry) entry.value += t.amount;
+    });
+
+    const totalTrend = trend.reduce((acc, curr) => acc + curr.value, 0);
+
+    return { topServices, interventionRate, trend, totalTrend };
+  }, [transactions, expedientes]);
+
   const sortedExpedientes = useMemo(() => {
     return [...expedientes].sort((a, b) => {
       const aTime = a.createdAt ?? parseDateTime(a.fecha)?.getTime() ?? 0;
@@ -1292,6 +1336,100 @@ const App = () => {
               <StatSimple title="Total Inventario" value={stats.totalStock} sub="Ampollas" icon={<Package className="text-blue-600" />} />
               <StatSimple title="Revisiones Hoy" value={stats.todayReviews} sub="Expedientes" icon={<CheckCircle2 className="text-emerald-600" />} />
               <StatSimple title="Alertas Stock" value={stats.lowStock} sub="Farmacos" icon={<AlertTriangle className="text-rose-600" />} isAlert={stats.lowStock > 0} />
+            </div>
+
+            {/* KPIs Charts Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Consumption Trend */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="mb-4">
+                  <h3 className="font-bold text-slate-700 text-sm mb-1">Tendencia de Consumo</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Ultimos 7 dias</p>
+                </div>
+                <div className="h-32 flex items-end justify-between gap-2">
+                  {kpiStats.trend.map((d, i) => {
+                    const max = Math.max(...kpiStats.trend.map(t => t.value), 10);
+                    const h = Math.max((d.value / max) * 100, 5);
+                    return (
+                      <div key={i} className="flex flex-col items-center w-full group">
+                        <div className="relative w-full flex justify-end flex-col items-center h-full">
+                          <div className="opacity-0 group-hover:opacity-100 absolute -top-6 text-[10px] font-bold bg-slate-800 text-white px-1.5 py-0.5 rounded transition-opacity">{d.value}</div>
+                          <div style={{ height: `${h}%` }} className="w-full bg-blue-100 rounded-t-sm group-hover:bg-blue-600 transition-colors"></div>
+                        </div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase mt-2">{d.day}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-center">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">Total Salidas</span>
+                  <span className="font-bold text-slate-800">{kpiStats.totalTrend}</span>
+                </div>
+              </div>
+
+              {/* Service Distribution */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div className="mb-4">
+                  <h3 className="font-bold text-slate-700 text-sm mb-1">Top Servicios</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Mayor demanda</p>
+                </div>
+                <div className="space-y-3">
+                  {kpiStats.topServices.map((s, i) => (
+                    <div key={i} className="space-y-1">
+                      <div className="flex justify-between text-[10px] font-bold uppercase">
+                        <span className="text-slate-600">{s.name}</span>
+                        <span className="text-slate-900">{s.value}</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
+                        <div
+                          style={{ width: `${(s.value / (kpiStats.topServices[0]?.value || 1)) * 100}%` }}
+                          className="h-full bg-indigo-500 rounded-full"
+                        ></div>
+                      </div>
+                    </div>
+                  ))}
+                  {kpiStats.topServices.length === 0 && <p className="text-xs text-slate-400">Sin datos de consumo.</p>}
+                </div>
+              </div>
+
+              {/* Quality/Intervention */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center">
+                <h3 className="font-bold text-slate-700 text-sm mb-6 w-full text-left">Calidad de Prescripcion</h3>
+                <div className="relative w-32 h-32 mb-4">
+                  <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
+                    <path
+                      className="text-emerald-100"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3.8"
+                    />
+                    <path
+                      className={`${kpiStats.interventionRate > 15 ? 'text-rose-500' : 'text-emerald-500'}`}
+                      strokeDasharray={`${100 - kpiStats.interventionRate}, 100`}
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3.8"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-2xl font-bold text-slate-800">{100 - kpiStats.interventionRate}%</span>
+                    <span className="text-[8px] font-bold text-slate-400 uppercase">Aprobacion</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 w-full mt-2">
+                  <div className="text-center p-2 bg-slate-50 rounded-lg">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">Intervenciones</p>
+                    <p className="text-lg font-bold text-rose-600">{kpiStats.interventionRate}%</p>
+                  </div>
+                  <div className="text-center p-2 bg-slate-50 rounded-lg">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">Total Rev.</p>
+                    <p className="text-lg font-bold text-slate-700">{expedientes.length}</p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
