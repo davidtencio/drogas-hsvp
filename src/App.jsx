@@ -2380,7 +2380,12 @@ const App = () => {
                           required
                           defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
                         />
-
+                        <InputLabel
+                          label="Dosis"
+                          name="dosis"
+                          className="uppercase"
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.dosis || ''}
+                        />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <SelectLabel
@@ -2400,12 +2405,7 @@ const App = () => {
                         name="prescription"
                         defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
                       />
-                      <InputLabel
-                        label="Dosis"
-                        name="dosis"
-                        className="uppercase"
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.dosis || ''}
-                      />
+
                       <SelectLabel
                         label="Farmaceutico"
                         name="pharmacist"
