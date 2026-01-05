@@ -916,7 +916,7 @@ const App = () => {
         service: isQuickIngreso ? 'INGRESO A INVENTARIO' : toUpper(formData.get('service')),
         cama: isQuickIngreso ? '' : toUpper(formData.get('cama')),
         prescription,
-        dosis: rxType !== 'ABIERTA' ? toUpper(formData.get('dosis')) : '',
+        dosis: toUpper(formData.get('dosis')),
         rxType,
         rxQuantity,
         rxUsed,
@@ -939,7 +939,7 @@ const App = () => {
         service: toUpper(formData.get('service')),
         cama: toUpper(formData.get('cama')),
         prescription: toUpper(formData.get('prescription')),
-        dosis: rxType !== 'ABIERTA' ? toUpper(formData.get('dosis')) : '',
+        dosis: toUpper(formData.get('dosis')),
         rxType,
         rxQuantity,
         rxUsed,
@@ -1742,7 +1742,12 @@ const App = () => {
                         )}
                       </td>
                       <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
-                        {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                        <div className="flex flex-col items-center">
+                          <span>{t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}</span>
+                          {!t.isCierre && t.dosis && (
+                            <span className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t.dosis}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2 justify-center">
@@ -2375,14 +2380,7 @@ const App = () => {
                           required
                           defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
                         />
-                        {rxTypeValue !== 'ABIERTA' && (
-                          <InputLabel
-                            label="Dosis"
-                            name="dosis"
-                            className="uppercase"
-                            defaultValue={transactions.find((t) => t.id === editingTransactionId)?.dosis || ''}
-                          />
-                        )}
+
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <SelectLabel
@@ -2401,6 +2399,12 @@ const App = () => {
                         label="N Receta / Comprobante"
                         name="prescription"
                         defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
+                      />
+                      <InputLabel
+                        label="Dosis"
+                        name="dosis"
+                        className="uppercase"
+                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.dosis || ''}
                       />
                       <SelectLabel
                         label="Farmaceutico"
