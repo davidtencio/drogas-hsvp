@@ -2189,7 +2189,7 @@ const App = () => {
                         className={`flex-1 text-xs font-bold py-1.5 rounded-md transition-all ${dosisType === 'UNICA' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
                           }`}
                       >
-                        Dosis Unica
+                        Dosis y Frecuencia
                       </button>
                       <button
                         type="button"
