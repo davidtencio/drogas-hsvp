@@ -1610,6 +1610,7 @@ const App = () => {
                 <div className="flex gap-2">
                   <button
                     onClick={() => {
+                      if (prompt('Ingrese clave de seguridad:') !== '1984') return;
                       setModalType('med-add');
                       setIsQuickIngreso(false);
                       setShowModal(true);
@@ -1663,6 +1664,7 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => {
+                      if (prompt('Ingrese clave de seguridad:') !== '1984') return;
                       const med = medications.find((m) => m.id === selectedMedId);
                       const movementCount = transactions.filter((t) => t.medId === selectedMedId).length;
                       const confirmDelete = window.confirm(
