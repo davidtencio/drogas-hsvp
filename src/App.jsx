@@ -1181,7 +1181,9 @@ const App = () => {
       const rxQuantity = 0;
       const rxType = 'CERRADA';
       const medId = formData.get('medicationId');
-      const prescription = toUpper(formData.get('motivo'));
+      const receta = toUpper(formData.get('receta'));
+      const motivo = toUpper(formData.get('motivo'));
+      const prescription = `RECETA ${receta} - ${motivo}`;
       const newTransaction = {
         id: Date.now(),
         date: now,
@@ -1191,7 +1193,7 @@ const App = () => {
         amount: parseInt(formData.get('amount'), 10),
         service: 'REINTEGRO',
         cama: '',
-        prescription, // Storing the "Reason/Motivo" in the prescription field as planned
+        prescription, // Storing combined Receta + Motivo
         rxType,
         rxQuantity,
         rxUsed: 0,
@@ -2600,7 +2602,7 @@ const App = () => {
                   />
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel label="Cantidad a Reintegrar" name="amount" type="number" required />
-                    <div />
+                    <InputLabel label="N Receta" name="receta" required />
                   </div>
                   <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
                   <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
