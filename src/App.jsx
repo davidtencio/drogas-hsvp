@@ -606,7 +606,7 @@ const App = () => {
       return;
     }
 
-    const itemsToRequest = sortedMedications
+    const itemsToRequest = currentInventory
       .filter((med) => selectedRequestMeds[med.id] && (requestQuantities[med.id] || 0) > 0)
       .map((med) => ({
         name: med.name,
@@ -1805,7 +1805,9 @@ const App = () => {
                       <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                       <td className="px-6 py-4 text-center">
                         {t.isCierre ? (
-                          <span className="font-bold uppercase text-amber-700">Cierre</span>
+                          <span className="font-bold uppercase text-amber-700">
+                            {(t.cierreTurno === 'SEGUNDO' || t.cierreTurno === 'TERCERO') ? 'INVENTARIO' : 'CIERRE'}
+                          </span>
                         ) : (
                           <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
@@ -1925,7 +1927,9 @@ const App = () => {
                         <td className="px-6 py-4 text-slate-500 text-center">{t.date}</td>
                         <td className="px-6 py-4 text-center">
                           {t.isCierre ? (
-                            <span className="font-bold uppercase text-amber-700">Cierre</span>
+                            <span className="font-bold uppercase text-amber-700">
+                              {(t.cierreTurno === 'SEGUNDO' || t.cierreTurno === 'TERCERO') ? 'INVENTARIO' : 'CIERRE'}
+                            </span>
                           ) : (
                             <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
                               {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
