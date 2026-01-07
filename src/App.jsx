@@ -610,11 +610,12 @@ const App = () => {
       .filter((med) => selectedRequestMeds[med.id] && (requestQuantities[med.id] || 0) > 0)
       .map((med) => ({
         name: med.name,
+        stock: med.stock,
         qty: requestQuantities[med.id],
       }));
 
     if (itemsToRequest.length === 0) {
-      alert('Por favor ingrese al menos una cantidad a solicitar.');
+      alert('Por favor seleccione al menos un medicamento e ingrese una cantidad mayor a 0.');
       return;
     }
 
@@ -645,11 +646,15 @@ const App = () => {
     // Table
     autoTable(doc, {
       startY: 60,
-      head: [['Medicamento', 'Cantidad Solicitada']],
-      body: itemsToRequest.map((item) => [item.name, item.qty]),
+      head: [['Medicamento', 'Cantidad Actual', 'Cantidad Solicitada']],
+      body: itemsToRequest.map((item) => [item.name, item.stock, item.qty]),
       theme: 'grid',
       headStyles: { fillColor: [22, 163, 74] }, // Emerald-600 like
       styles: { fontSize: 10, cellPadding: 3 },
+      columnStyles: {
+        1: { halign: 'center' },
+        2: { halign: 'center' },
+      },
     });
 
     // Signatures
