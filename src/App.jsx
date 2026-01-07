@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Clock,
+  ClipboardList,
   Database,
   FileText,
   Filter,
@@ -24,6 +25,8 @@ import {
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -77,6 +80,7 @@ const App = () => {
   const [auditoriaPage, setAuditoriaPage] = useState(1);
   const [bitacoraPage, setBitacoraPage] = useState(1);
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
+  const [requestQuantities, setRequestQuantities] = useState({});
   // Data States moved up
   const [transactions, setTransactions] = useState([
     {
@@ -578,6 +582,72 @@ const App = () => {
       cancelled = true;
     };
   }, [authUser]);
+
+  const handleRequestChange = (medId, value) => {
+    const num = parseInt(value, 10);
+    setRequestQuantities((prev) => ({
+      ...prev,
+      [medId]: isNaN(num) || num < 0 ? 0 : num,
+    }));
+  };
+
+  const generateRequestPDF = () => {
+    const itemsToRequest = sortedMedications
+      .filter((med) => (requestQuantities[med.id] || 0) > 0)
+      .map((med) => ({
+        name: med.name,
+        qty: requestQuantities[med.id],
+      }));
+
+    if (itemsToRequest.length === 0) {
+      alert('Por favor ingrese al menos una cantidad a solicitar.');
+      return;
+    }
+
+    const doc = new jsPDF();
+    const now = new Date().toLocaleString('es-CR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Header
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('HOSPITAL SAN VICENTE DE PAUL', 105, 15, { align: 'center' });
+    doc.setFontSize(12);
+    doc.text('CONTROL DE DROGAS Y ESTUPEFACIENTES', 105, 22, { align: 'center' });
+    doc.setFontSize(14);
+    doc.text('SOLICITUD DE REPOSICION DE STOCK', 105, 32, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Fecha y Hora: ${now}`, 14, 42);
+    doc.text(`Solicitante: ${authUser?.email || 'N/A'}`, 14, 48);
+
+    // Table
+    autoTable(doc, {
+      startY: 55,
+      head: [['Medicamento', 'Cantidad Solicitada']],
+      body: itemsToRequest.map((item) => [item.name, item.qty]),
+      theme: 'grid',
+      headStyles: { fillColor: [22, 163, 74] }, // Emerald-600 like
+      styles: { fontSize: 10, cellPadding: 3 },
+    });
+
+    // Signatures
+    const finalY = doc.lastAutoTable.finalY + 40;
+
+    doc.line(20, finalY, 80, finalY);
+    doc.text('Firma Solicitante', 50, finalY + 5, { align: 'center' });
+
+    doc.line(130, finalY, 190, finalY);
+    doc.text('Firma Recibido (Farmacia)', 160, finalY + 5, { align: 'center' });
+
+    doc.save(`solicitud_reposicion_${Date.now()}.pdf`);
+  };
 
   // Data States moved to top
 
@@ -1215,6 +1285,7 @@ const App = () => {
           <NavItem active={activeTab === 'kardex'} onClick={() => setActiveTab('kardex')} icon={<History size={18} />} label="Kardex Individual" />
           <NavItem active={activeTab === 'auditoria'} onClick={() => setActiveTab('auditoria')} icon={<ShieldCheck size={18} />} label="Revisiones" />
           <NavItem active={activeTab === 'bitacora'} onClick={() => setActiveTab('bitacora')} icon={<FileText size={18} />} label="Bitacora" />
+          <NavItem active={activeTab === 'solicitud'} onClick={() => setActiveTab('solicitud')} icon={<ClipboardList size={18} />} label="Solicitud Reposicion" />
         </div>
 
         <div className="p-6 border-t border-slate-800">
@@ -1241,7 +1312,9 @@ const App = () => {
                     ? 'Auditoria de Expedientes'
                     : activeTab === 'bitacora'
                       ? 'Bitacora de Jornada'
-                      : 'Resumen Operativo'}
+                      : activeTab === 'solicitud'
+                        ? 'Solicitud de Reposicion'
+                        : 'Resumen Operativo'}
             </h2>
             <p className="text-slate-500 text-sm">Control centralizado y validacion farmacoterapeutica.</p>
           </div>
@@ -2066,6 +2139,58 @@ const App = () => {
               onPrev={() => setBitacoraPage((prev) => Math.max(prev - 1, 1))}
               onNext={() => setBitacoraPage((prev) => Math.min(prev + 1, bitacoraPageData.totalPages))}
             />
+          </div>
+        )}
+
+        {activeTab === 'solicitud' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <div>
+                  <h3 className="font-bold text-slate-700 text-sm">Generar Solicitud de Pedido</h3>
+                  <p className="text-[10px] text-slate-500 uppercase">Seleccione las cantidades a reponer segun el stock actual</p>
+                </div>
+                <button
+                  onClick={generateRequestPDF}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-sm"
+                >
+                  <FileText size={16} /> Generar PDF
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                      <th className="px-6 py-3">Medicamento</th>
+                      <th className="px-6 py-3 text-center">Stock Actual</th>
+                      <th className="px-6 py-3 text-center">Consumo Semanal</th>
+                      <th className="px-6 py-3 text-center w-32">Solicitar</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {currentInventory.map((med) => (
+                      <tr key={med.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-3 font-semibold text-slate-700">{med.name}</td>
+                        <td className={`px-6 py-3 text-center font-bold ${med.stock < 15 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          {med.stock}
+                        </td>
+                        <td className="px-6 py-3 text-center text-slate-500">{med.weeklyOut}</td>
+                        <td className="px-6 py-2 text-center">
+                          <input
+                            type="number"
+                            min="0"
+                            value={requestQuantities[med.id] || ''}
+                            onChange={(e) => handleRequestChange(med.id, e.target.value)}
+                            className="w-20 bg-white border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none"
+                            placeholder="0"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 
