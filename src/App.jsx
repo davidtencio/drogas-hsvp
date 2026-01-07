@@ -81,6 +81,8 @@ const App = () => {
   const [bitacoraPage, setBitacoraPage] = useState(1);
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
   const [requestQuantities, setRequestQuantities] = useState({});
+  const [requestPharmacist, setRequestPharmacist] = useState('');
+  const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
   // Data States moved up
   const [transactions, setTransactions] = useState([
     {
@@ -591,9 +593,21 @@ const App = () => {
     }));
   };
 
+  const toggleRequestMed = (medId) => {
+    setSelectedRequestMeds((prev) => ({
+      ...prev,
+      [medId]: !prev[medId],
+    }));
+  };
+
   const generateRequestPDF = () => {
+    if (!requestPharmacist) {
+      alert('Por favor seleccione el farmaceutico que elabora la solicitud.');
+      return;
+    }
+
     const itemsToRequest = sortedMedications
-      .filter((med) => (requestQuantities[med.id] || 0) > 0)
+      .filter((med) => selectedRequestMeds[med.id] && (requestQuantities[med.id] || 0) > 0)
       .map((med) => ({
         name: med.name,
         qty: requestQuantities[med.id],
@@ -626,10 +640,11 @@ const App = () => {
     doc.setFont('helvetica', 'normal');
     doc.text(`Fecha y Hora: ${now}`, 14, 42);
     doc.text(`Solicitante: ${authUser?.email || 'N/A'}`, 14, 48);
+    doc.text(`Elaborado por: ${requestPharmacist}`, 14, 54);
 
     // Table
     autoTable(doc, {
-      startY: 55,
+      startY: 60,
       head: [['Medicamento', 'Cantidad Solicitada']],
       body: itemsToRequest.map((item) => [item.name, item.qty]),
       theme: 'grid',
@@ -2145,22 +2160,40 @@ const App = () => {
         {activeTab === 'solicitud' && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="px-6 py-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50/50 gap-4">
                 <div>
                   <h3 className="font-bold text-slate-700 text-sm">Generar Solicitud de Pedido</h3>
                   <p className="text-[10px] text-slate-500 uppercase">Seleccione las cantidades a reponer segun el stock actual</p>
                 </div>
-                <button
-                  onClick={generateRequestPDF}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-sm"
-                >
-                  <FileText size={16} /> Generar PDF
-                </button>
+                <div className="flex flex-col md:flex-row items-end gap-4 w-full md:w-auto">
+                  <div className="w-full md:w-64">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Farmaceutico a cargo</label>
+                    <select
+                      value={requestPharmacist}
+                      onChange={(e) => setRequestPharmacist(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-600 outline-none font-medium"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {pharmacists.map((ph, i) => (
+                        <option key={i} value={ph}>
+                          {ph}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={generateRequestPDF}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-sm h-10"
+                  >
+                    <FileText size={16} /> Generar PDF
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                      <th className="px-6 py-3 w-16 text-center">Sel.</th>
                       <th className="px-6 py-3">Medicamento</th>
                       <th className="px-6 py-3 text-center">Stock Actual</th>
                       <th className="px-6 py-3 text-center">Consumo Semanal</th>
@@ -2169,7 +2202,15 @@ const App = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {currentInventory.map((med) => (
-                      <tr key={med.id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={med.id} className={`hover:bg-slate-50 transition-colors ${selectedRequestMeds[med.id] ? 'bg-emerald-50/30' : ''}`}>
+                        <td className="px-6 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!!selectedRequestMeds[med.id]}
+                            onChange={() => toggleRequestMed(med.id)}
+                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-600 cursor-pointer"
+                          />
+                        </td>
                         <td className="px-6 py-3 font-semibold text-slate-700">{med.name}</td>
                         <td className={`px-6 py-3 text-center font-bold ${med.stock < 15 ? 'text-rose-600' : 'text-emerald-600'}`}>
                           {med.stock}
@@ -2181,7 +2222,8 @@ const App = () => {
                             min="0"
                             value={requestQuantities[med.id] || ''}
                             onChange={(e) => handleRequestChange(med.id, e.target.value)}
-                            className="w-20 bg-white border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none"
+                            disabled={!selectedRequestMeds[med.id]}
+                            className={`w-20 border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none ${!selectedRequestMeds[med.id] ? 'bg-slate-100 text-slate-400' : 'bg-white'}`}
                             placeholder="0"
                           />
                         </td>
