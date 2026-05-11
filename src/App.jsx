@@ -45,6 +45,9 @@ const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
 
 const MAX_RECORDS = 5000;
+const MAX_PENDING_WRITES = 200;
+const MIN_PENDING_WRITES = 20;
+const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -196,6 +199,56 @@ const App = () => {
     return new Date(year, month - 1, day, hour, minute);
   };
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const isQuotaExceededError = (error) =>
+    error &&
+    (QUOTA_EXCEEDED_ERRORS.includes(error.name) ||
+      error.code === 22 ||
+      error.code === 1014 ||
+      /quota/i.test(error.message || ''));
+  const safeSetLocalStorage = (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      if (!isQuotaExceededError(error)) return false;
+      if (key === 'pharmaPendingWrites') {
+        // Si la cola no cabe, recortamos los registros mas viejos para priorizar cambios recientes.
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed) && parsed.length > MIN_PENDING_WRITES) {
+            const trimmed = parsed.slice(-Math.max(MIN_PENDING_WRITES, Math.floor(parsed.length / 2)));
+            localStorage.setItem(key, JSON.stringify(trimmed));
+            pendingWritesRef.current = trimmed;
+            setPendingCount(trimmed.length);
+            setQueueOverflow(true);
+            setSyncError('Se redujo la cola local por limite de almacenamiento del navegador.');
+            return true;
+          }
+        } catch {
+          // No-op: si no se puede recortar, limpiamos abajo.
+        }
+      }
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // Ignorar errores de limpieza.
+      }
+      if (key === 'pharmaPendingWrites') {
+        pendingWritesRef.current = [];
+        setPendingCount(0);
+        setQueueOverflow(true);
+        setSyncError('No hay espacio local para cola offline. Libere almacenamiento del navegador.');
+      }
+      return false;
+    }
+  };
+  const persistPendingWrites = (items) => {
+    const capped = items.slice(0, MAX_PENDING_WRITES);
+    setQueueOverflow(items.length > MAX_PENDING_WRITES);
+    pendingWritesRef.current = capped;
+    safeSetLocalStorage('pharmaPendingWrites', JSON.stringify(capped));
+    setPendingCount((pendingWritesRef.current || []).length);
+  };
 
   const handleOpenRxUse = (transaction) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
@@ -215,12 +268,7 @@ const App = () => {
 
   const enqueueWrite = (action) => {
     const next = [...(pendingWritesRef.current || []), action];
-    pendingWritesRef.current = next;
-    const capped = next.slice(0, 200);
-    setQueueOverflow(next.length > 200);
-    pendingWritesRef.current = capped;
-    localStorage.setItem('pharmaPendingWrites', JSON.stringify(capped));
-    setPendingCount(capped.length);
+    persistPendingWrites(next);
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -251,11 +299,10 @@ const App = () => {
           });
         }
       }
-      pendingWritesRef.current = remaining;
-      localStorage.setItem('pharmaPendingWrites', JSON.stringify(remaining));
-      setPendingCount(remaining.length);
+      persistPendingWrites(remaining);
       if (remaining.length === 0) {
         localStorage.removeItem('pharmaPendingWrites');
+        localStorage.removeItem('pharmaControlData');
         setCloudStatus('Sincronizado');
         setSyncError('');
         retryCountRef.current = 0;
@@ -333,7 +380,7 @@ const App = () => {
       if (Array.isArray(stored)) {
         pendingWritesRef.current = stored;
         setPendingCount(stored.length);
-        setQueueOverflow(stored.length > 200);
+        setQueueOverflow(stored.length > MAX_PENDING_WRITES);
       }
     } catch {
       pendingWritesRef.current = [];
@@ -682,7 +729,7 @@ const App = () => {
       condiciones,
       selectedMedId,
     };
-    localStorage.setItem('pharmaControlData', JSON.stringify(localPayload));
+    safeSetLocalStorage('pharmaControlData', JSON.stringify(localPayload));
     if (!cloudReady || !authUser) return;
     const cloudPayload = {
       medications,
