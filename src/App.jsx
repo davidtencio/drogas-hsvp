@@ -92,6 +92,7 @@ const App = () => {
   const [auditoriaPage, setAuditoriaPage] = useState(1);
   const [bitacoraPage, setBitacoraPage] = useState(1);
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
+  const [cierreTurnoValue, setCierreTurnoValue] = useState('SEGUNDO');
   const [requestQuantities, setRequestQuantities] = useState({});
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
@@ -1315,6 +1316,10 @@ const App = () => {
     const pct = Math.min(100, Math.round((used / limit) * 100));
     return { used, limit, pct };
   }, [transactions.length, maxRecordsLimit]);
+  const selectedCurrentStock = useMemo(
+    () => currentInventory.find((m) => m.id === selectedMedId)?.stock ?? 0,
+    [currentInventory, selectedMedId],
+  );
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -1434,6 +1439,10 @@ const App = () => {
       }
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
+      const computedTotalMedicamento =
+        cierreTurno === 'CIERRE 24 HORAS'
+          ? Number(selectedCurrentStock) || 0
+          : parseInt(formData.get('totalMedicamento'), 10) || 0;
       const newCierre = {
         id: Date.now(),
         date: now,
@@ -1451,7 +1460,7 @@ const App = () => {
         isCierre: true,
         cierreTurno,
         totalRecetas: parseInt(formData.get('totalRecetas'), 10) || 0,
-        totalMedicamento: parseInt(formData.get('totalMedicamento'), 10) || 0,
+        totalMedicamento: computedTotalMedicamento,
       };
       setTransactions([newCierre, ...transactions]);
       enqueueWrite({ type: 'set', collection: 'transactions', id: newCierre.id, data: newCierre });
@@ -2072,6 +2081,7 @@ const App = () => {
                   <button
                     onClick={() => {
                       setModalType('cierre');
+                      setCierreTurnoValue('SEGUNDO');
                       setShowCatalogMenu(false);
                       setShowModal(true);
                     }}
@@ -2983,10 +2993,22 @@ const App = () => {
                     label="Turno"
                     name="turno"
                     options={['PRIMER', 'SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+                    defaultValue={cierreTurnoValue}
+                    onChange={(e) => setCierreTurnoValue(e.target.value)}
                   />
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
-                    <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
+                    {cierreTurnoValue === 'CIERRE 24 HORAS' ? (
+                      <InputLabel
+                        label="Total de Medicamento"
+                        name="totalMedicamento"
+                        type="number"
+                        value={selectedCurrentStock}
+                        readOnly
+                      />
+                    ) : (
+                      <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
+                    )}
                   </div>
                   <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
                 </>
