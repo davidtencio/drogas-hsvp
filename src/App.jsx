@@ -49,6 +49,7 @@ const MAX_PENDING_WRITES = 200;
 const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
+const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -602,7 +603,9 @@ const App = () => {
           ),
         );
         if (missingMedIds.length > 0) {
-          const recovered = missingMedIds.map((id) => {
+          const recovered = missingMedIds
+            .filter((id) => INITIAL_MEDICATIONS_BY_ID.has(id) || RECOVERABLE_MED_ID_PATTERN.test(id))
+            .map((id) => {
             const base = INITIAL_MEDICATIONS_BY_ID.get(id);
             if (base) return base;
             return {
@@ -612,9 +615,11 @@ const App = () => {
               unitPrice: 0,
               quota: 0,
             };
-          });
-          loadedMedications = [...loadedMedications, ...recovered];
-          setMedications(loadedMedications);
+            });
+          if (recovered.length > 0) {
+            loadedMedications = [...loadedMedications, ...recovered];
+            setMedications(loadedMedications);
+          }
         }
         if (servicesMigrated || pharmacistsMigrated || condicionesMigrated) {
           await setDoc(
