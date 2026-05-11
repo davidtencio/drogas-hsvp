@@ -96,6 +96,9 @@ const App = () => {
   const [bitacoraPage, setBitacoraPage] = useState(1);
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
   const [cierreTurnoValue, setCierreTurnoValue] = useState('SEGUNDO');
+  const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
+  const [securityPromptValue, setSecurityPromptValue] = useState('');
+  const securityPromptResolverRef = useRef(null);
   const [requestQuantities, setRequestQuantities] = useState({});
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
@@ -204,7 +207,8 @@ const App = () => {
     }
   };
   const applyManualBalanceAdjustment = () => {
-    if (prompt('Ingrese clave de seguridad:') !== '1984') return;
+    requestSecurityKey().then((ok) => {
+      if (!ok) return;
     const medId = adjustMedId || selectedMedId;
     const amount = parseInt(adjustBalanceValue, 10);
     if (!medId || !Number.isFinite(amount) || amount < 0) {
@@ -243,6 +247,21 @@ const App = () => {
     enqueueWrite({ type: 'set', collection: 'transactions', id: newAdjustment.id, data: newAdjustment });
     setAdjustBalanceValue('');
     alert('Ajuste manual de saldo aplicado.');
+    });
+  };
+  const requestSecurityKey = () =>
+    new Promise((resolve) => {
+      securityPromptResolverRef.current = resolve;
+      setSecurityPromptValue('');
+      setSecurityPromptOpen(true);
+    });
+  const resolveSecurityPrompt = (accepted) => {
+    const ok = accepted && securityPromptValue === '1984';
+    const resolver = securityPromptResolverRef.current;
+    securityPromptResolverRef.current = null;
+    setSecurityPromptOpen(false);
+    setSecurityPromptValue('');
+    if (resolver) resolver(ok);
   };
   const downloadDatabaseBackup = () => {
     const payload = {
@@ -2112,8 +2131,9 @@ const App = () => {
               <div className="flex items-center gap-4 text-xs">
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      if (prompt('Ingrese clave de seguridad:') !== '1984') return;
+                    onClick={async () => {
+                      const hasKey = await requestSecurityKey();
+                      if (!hasKey) return;
                       setModalType('med-add');
                       setIsQuickIngreso(false);
                       setShowModal(true);
@@ -2167,8 +2187,9 @@ const App = () => {
                     Editar
                   </button>
                   <button
-                    onClick={() => {
-                      if (prompt('Ingrese clave de seguridad:') !== '1984') return;
+                    onClick={async () => {
+                      const hasKey = await requestSecurityKey();
+                      if (!hasKey) return;
                       const med = medications.find((m) => m.id === selectedMedId);
                       const movementCount = transactions.filter((t) => t.medId === selectedMedId).length;
                       const confirmDelete = window.confirm(
@@ -2503,7 +2524,7 @@ const App = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex gap-2 justify-center">
+                      <div className="flex gap-2 justify-center items-center min-w-[170px] mx-auto">
                         <button
                           onClick={() => {
                             setEditingExpedienteId(e.id);
@@ -2527,6 +2548,14 @@ const App = () => {
                           >
                             <PlusCircle size={14} />
                           </button>
+                        )}
+                        {!(e.dosis && e.dosis.toString().startsWith('INFUSION')) && (
+                          <span
+                            aria-hidden="true"
+                            className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-transparent invisible flex items-center justify-center"
+                          >
+                            <PlusCircle size={14} />
+                          </span>
                         )}
                         <button
                           onClick={() => {
@@ -2867,6 +2896,45 @@ const App = () => {
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-40">
           <div className="bg-white rounded-xl px-6 py-4 shadow-lg border border-slate-200">
             <p className="text-sm font-bold text-slate-700">Cargando datos...</p>
+          </div>
+        </div>
+      )}
+      {securityPromptOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Validacion de Seguridad</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-slate-600">Ingrese clave de seguridad para continuar.</p>
+              <input
+                type="password"
+                value={securityPromptValue}
+                onChange={(e) => setSecurityPromptValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') resolveSecurityPrompt(true);
+                  if (e.key === 'Escape') resolveSecurityPrompt(false);
+                }}
+                autoFocus
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => resolveSecurityPrompt(false)}
+                  className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveSecurityPrompt(true)}
+                  className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-700"
+                >
+                  Aceptar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
