@@ -392,6 +392,10 @@ const App = () => {
     if (Number.isFinite(t?.createdAt)) return t.createdAt;
     return 0;
   };
+  const getLast24hClose = (items, medId) =>
+    items
+      .filter((t) => t.medId === medId && t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')
+      .sort((a, b) => getTransactionTimestamp(b) - getTransactionTimestamp(a))[0];
   const isQuotaExceededError = (error) =>
     error &&
     (QUOTA_EXCEEDED_ERRORS.includes(error.name) ||
@@ -1110,9 +1114,17 @@ const App = () => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     return sortedMedications.map((med) => {
-      const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
-      const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
-      const weeklyOut = medTransactions.reduce((acc, t) => {
+      const lastClose24h = getLast24hClose(transactions, med.id);
+      const closeTime = lastClose24h ? getTransactionTimestamp(lastClose24h) : null;
+      const baseStock = Number(lastClose24h?.totalMedicamento) || 0;
+      const periodTransactions = transactions.filter(
+        (t) =>
+          t.medId === med.id &&
+          !t.isCierre &&
+          (closeTime === null || getTransactionTimestamp(t) > closeTime),
+      );
+      const stock = periodTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), baseStock);
+      const weeklyOut = periodTransactions.reduce((acc, t) => {
         if (t.type !== 'OUT') return acc;
         const when = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
         if (!when || when < cutoff) return acc;
@@ -1259,7 +1271,9 @@ const App = () => {
     let running = 0;
     const balanceMap = {};
     medItems.forEach((t) => {
-      if (!t.isCierre) {
+      if (t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS') {
+        running = Number(t.totalMedicamento) || 0;
+      } else if (!t.isCierre) {
         const amount = Number(t.amount) || 0;
         running += t.type === 'IN' ? amount : -amount;
       }
@@ -2956,7 +2970,7 @@ const App = () => {
                   <SelectLabel
                     label="Turno"
                     name="turno"
-                    options={['SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+                    options={['PRIMER', 'SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
                   />
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
