@@ -48,6 +48,7 @@ const MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? EN
 const MAX_PENDING_WRITES = 200;
 const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
+const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -438,13 +439,17 @@ const App = () => {
       try {
         const ref = doc(db, dataDocPath);
         const snap = await getDoc(ref);
+        let loadedMedications = [...INITIAL_MEDICATIONS];
         let legacyServices = null;
         let legacyPharmacists = null;
         let legacyCondiciones = null;
         if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
-          if (data.medications?.length) setMedications(data.medications);
+          if (data.medications?.length) {
+            loadedMedications = data.medications;
+            setMedications(data.medications);
+          }
           if (data.services?.length) legacyServices = data.services;
           if (data.pharmacists?.length) legacyPharmacists = data.pharmacists;
           if (data.condiciones?.length) legacyCondiciones = data.condiciones;
@@ -588,6 +593,29 @@ const App = () => {
           loadCatalogCollection('catalog_pharmacists', setPharmacists, legacyPharmacists),
           loadCatalogCollection('catalog_condiciones', setCondiciones, legacyCondiciones),
         ]);
+        const knownMedIds = new Set(loadedMedications.map((m) => m.id));
+        const missingMedIds = Array.from(
+          new Set(
+            transactionsLoaded.items
+              .map((t) => t.medId)
+              .filter((id) => id && !knownMedIds.has(id)),
+          ),
+        );
+        if (missingMedIds.length > 0) {
+          const recovered = missingMedIds.map((id) => {
+            const base = INITIAL_MEDICATIONS_BY_ID.get(id);
+            if (base) return base;
+            return {
+              id,
+              name: toUpper(id.replace(/[-_]/g, ' ')),
+              type: 'Otros',
+              unitPrice: 0,
+              quota: 0,
+            };
+          });
+          loadedMedications = [...loadedMedications, ...recovered];
+          setMedications(loadedMedications);
+        }
         if (servicesMigrated || pharmacistsMigrated || condicionesMigrated) {
           await setDoc(
             ref,
