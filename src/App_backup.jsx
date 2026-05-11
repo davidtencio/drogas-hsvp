@@ -183,7 +183,7 @@ const App = () => {
     let currentId = null;
     let currentBed = null;
 
-    dataRows.forEach((row, index) => {
+    dataRows.forEach((row) => {
       // row es un array de valores [col0, col1, col2, ...]
       if (!row || row.length === 0) return;
 

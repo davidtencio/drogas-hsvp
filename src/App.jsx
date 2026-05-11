@@ -60,7 +60,6 @@ const App = () => {
   const [editingMedId, setEditingMedId] = useState(null);
   const [editingTransactionId, setEditingTransactionId] = useState(null);
   const [editingExpedienteId, setEditingExpedienteId] = useState(null);
-  const [prefillKardexType, setPrefillKardexType] = useState('');
   const [isQuickIngreso, setIsQuickIngreso] = useState(false);
   const [showCatalogMenu, setShowCatalogMenu] = useState(false);
   const [services, setServices] = useState(INITIAL_SERVICES);
@@ -78,7 +77,6 @@ const App = () => {
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
   const [queueOverflow, setQueueOverflow] = useState(false);
-  const [partialLoad, setPartialLoad] = useState(false);
   const [showHistoric, setShowHistoric] = useState(false);
   const [kardexSearch, setKardexSearch] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -468,10 +466,6 @@ const App = () => {
     return aId - bId;
   };
   const compareTransactionsDesc = (a, b) => compareTransactionsAsc(b, a);
-  const getLast24hClose = (items, medId) =>
-    items
-      .filter((t) => t.medId === medId && t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')
-      .sort(compareTransactionsDesc)[0];
   const getLastBalanceAnchor = (items, medId) =>
     items
       .filter(
@@ -652,7 +646,6 @@ const App = () => {
         setPendingCount(0);
         setSyncErrors([]);
         setQueueOverflow(false);
-        setPartialLoad(false);
       }
     });
     return () => unsubscribe();
@@ -714,7 +707,6 @@ const App = () => {
     if (!authUser) return;
     let cancelled = false;
     const hydrateFromCloud = async () => {
-      setPartialLoad(false);
       setCloudLoading(true);
       setCloudStatus('Sincronizando...');
       let hadPartial = false;
@@ -919,7 +911,6 @@ const App = () => {
         const anyError = transactionsLoaded.hadError || expedientesLoaded.hadError || bitacoraLoaded.hadError;
         hadPartial = anyFallback || anyError;
         hadLoadError = anyError;
-        setPartialLoad(hadPartial);
         if (anyError) setCloudStatus('Sin conexion');
       } catch {
         try {
@@ -1944,7 +1935,6 @@ const App = () => {
             <button
               onClick={() => {
                 setModalType(activeTab === 'auditoria' ? 'auditoria' : activeTab === 'bitacora' ? 'bitacora' : 'kardex');
-                setPrefillKardexType('');
                 setIsQuickIngreso(false);
                 setShowCatalogMenu(false);
                 setRxTypeValue('CERRADA');
@@ -2144,7 +2134,6 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => {
-                      setPrefillKardexType('IN');
                       setIsQuickIngreso(true);
                       setModalType('kardex');
                       setShowCatalogMenu(false);
@@ -2985,7 +2974,6 @@ const App = () => {
                   setEditingMedId(null);
                   setEditingTransactionId(null);
                   setEditingExpedienteId(null);
-                  setPrefillKardexType('');
                   setIsQuickIngreso(false);
                   setRxTypeValue('CERRADA');
                   setDosisType('UNICA');
