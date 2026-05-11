@@ -43,6 +43,7 @@ const INITIAL_PHARMACISTS = ['2492 ESTHER HERNANDEZ', '2488 VIVIANA ESQUIVEL', '
 const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
+const CR_TIMEZONE = 'America/Costa_Rica';
 const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 10);
 const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
 const MAX_PENDING_WRITES = 200;
@@ -367,15 +368,30 @@ const App = () => {
 
   const parseDateTime = (value) => {
     if (!value) return null;
-    const cleaned = value.replace(',', '');
-    const [datePart, timePart] = cleaned.split(' ');
+    const cleaned = value
+      .replace(',', '')
+      .replace(/\s*a\.\s*m\.\s*$/i, ' AM')
+      .replace(/\s*p\.\s*m\.\s*$/i, ' PM')
+      .trim();
+    const parts = cleaned.split(/\s+/);
+    const datePart = parts[0];
+    const timePart = parts[1] || '';
+    const ampm = (parts[2] || '').toUpperCase();
     if (!datePart) return null;
     const [day, month, year] = datePart.split('/').map(Number);
     if (!day || !month || !year) return null;
-    const [hour = 0, minute = 0] = (timePart || '').split(':').map(Number);
+    let [hour = 0, minute = 0] = (timePart || '').split(':').map(Number);
+    if (ampm === 'PM' && hour < 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
     return new Date(year, month - 1, day, hour, minute);
   };
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const getTransactionTimestamp = (t) => {
+    const fromDate = parseDateTime(t?.date)?.getTime();
+    if (Number.isFinite(fromDate)) return fromDate;
+    if (Number.isFinite(t?.createdAt)) return t.createdAt;
+    return 0;
+  };
   const isQuotaExceededError = (error) =>
     error &&
     (QUOTA_EXCEEDED_ERRORS.includes(error.name) ||
@@ -431,7 +447,7 @@ const App = () => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
     if (nextUsed <= transaction.rxUsed) return;
-    const now = new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16);
+    const now = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
     const newTransaction = {
       ...transaction,
       id: Date.now(),
@@ -472,7 +488,7 @@ const App = () => {
             id: action.id,
             collection: action.collection,
             type: action.type,
-            time: new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16),
+            time: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
           });
         }
       }
@@ -891,6 +907,7 @@ const App = () => {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: CR_TIMEZONE,
     });
 
     // Header
@@ -999,7 +1016,7 @@ const App = () => {
 
         return {
           id: Date.now() + Math.random(),
-          date: new Date().toLocaleString('es-CR', { hour12: false }).slice(0, 16),
+          date: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
           createdAt: Date.now(),
           medId: med.id,
           type: 'IN',
@@ -1141,7 +1158,7 @@ const App = () => {
       d.setDate(d.getDate() - i);
       trend.push({
         date: d,
-        day: d.toLocaleDateString('es-CR', { weekday: 'short' }).slice(0, 3).toUpperCase(),
+        day: d.toLocaleDateString('es-CR', { weekday: 'short', timeZone: CR_TIMEZONE }).slice(0, 3).toUpperCase(),
         value: 0
       });
     }
@@ -1231,11 +1248,7 @@ const App = () => {
         historic.push(t);
       }
     });
-    const sortByDate = (a, b) => {
-      const aTime = a.createdAt ?? parseDateTime(a.date)?.getTime() ?? 0;
-      const bTime = b.createdAt ?? parseDateTime(b.date)?.getTime() ?? 0;
-      return bTime - aTime;
-    };
+    const sortByDate = (a, b) => getTransactionTimestamp(b) - getTransactionTimestamp(a);
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
   }, [transactions, selectedMedId, kardexSearch]);
 
@@ -1271,6 +1284,7 @@ const App = () => {
       hour: 'numeric',
       minute: 'numeric',
       hour12: true,
+      timeZone: CR_TIMEZONE,
     });
 
     if (modalType === 'kardex') {
