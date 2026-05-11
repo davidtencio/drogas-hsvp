@@ -85,6 +85,9 @@ const App = () => {
   const [configMedSearch, setConfigMedSearch] = useState('');
   const [editingConfigMedId, setEditingConfigMedId] = useState(null);
   const [configMedNameDraft, setConfigMedNameDraft] = useState('');
+  const [adjustMedId, setAdjustMedId] = useState(INITIAL_MEDICATIONS[0].id);
+  const [adjustBalanceValue, setAdjustBalanceValue] = useState('');
+  const [adjustPharmacist, setAdjustPharmacist] = useState(INITIAL_PHARMACISTS[0] || '');
   const [maxRecordsLimit, setMaxRecordsLimit] = useState(DEFAULT_MAX_RECORDS);
   const [maxRecordsDraft, setMaxRecordsDraft] = useState(String(DEFAULT_MAX_RECORDS));
   const [kardexRecentPage, setKardexRecentPage] = useState(1);
@@ -199,6 +202,47 @@ const App = () => {
       setCloudStatus('Sin conexion');
       alert('No se pudo actualizar el limite de registros.');
     }
+  };
+  const applyManualBalanceAdjustment = () => {
+    if (prompt('Ingrese clave de seguridad:') !== '1984') return;
+    const medId = adjustMedId || selectedMedId;
+    const amount = parseInt(adjustBalanceValue, 10);
+    if (!medId || !Number.isFinite(amount) || amount < 0) {
+      alert('Ingrese un saldo valido (entero mayor o igual a 0).');
+      return;
+    }
+    const now = new Date().toLocaleString('es-CR', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+      timeZone: CR_TIMEZONE,
+    });
+    const newAdjustment = {
+      id: Date.now(),
+      date: now,
+      createdAt: Date.now(),
+      medId,
+      type: 'IN',
+      amount: 0,
+      service: 'AJUSTE MANUAL DE SALDO',
+      cama: '',
+      prescription: '',
+      rxType: 'CERRADA',
+      rxQuantity: 0,
+      rxUsed: 0,
+      pharmacist: toUpper(adjustPharmacist || pharmacists[0] || ''),
+      isCierre: true,
+      cierreTurno: 'AJUSTE MANUAL SALDO',
+      totalRecetas: 0,
+      totalMedicamento: amount,
+    };
+    setTransactions([newAdjustment, ...transactions]);
+    enqueueWrite({ type: 'set', collection: 'transactions', id: newAdjustment.id, data: newAdjustment });
+    setAdjustBalanceValue('');
+    alert('Ajuste manual de saldo aplicado.');
   };
   const downloadDatabaseBackup = () => {
     const payload = {
@@ -408,6 +452,15 @@ const App = () => {
   const getLast24hClose = (items, medId) =>
     items
       .filter((t) => t.medId === medId && t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')
+      .sort(compareTransactionsDesc)[0];
+  const getLastBalanceAnchor = (items, medId) =>
+    items
+      .filter(
+        (t) =>
+          t.medId === medId &&
+          t.isCierre &&
+          (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO'),
+      )
       .sort(compareTransactionsDesc)[0];
   const isQuotaExceededError = (error) =>
     error &&
@@ -1127,9 +1180,9 @@ const App = () => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     return sortedMedications.map((med) => {
-      const lastClose24h = getLast24hClose(transactions, med.id);
-      const closeTime = lastClose24h ? getTransactionTimestamp(lastClose24h) : null;
-      const baseStock = Number(lastClose24h?.totalMedicamento) || 0;
+      const lastAnchor = getLastBalanceAnchor(transactions, med.id);
+      const closeTime = lastAnchor ? getTransactionTimestamp(lastAnchor) : null;
+      const baseStock = Number(lastAnchor?.totalMedicamento) || 0;
       const periodTransactions = transactions.filter(
         (t) =>
           t.medId === med.id &&
@@ -1284,7 +1337,10 @@ const App = () => {
     let running = 0;
     const balanceMap = {};
     medItems.forEach((t) => {
-      if (t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS') {
+      if (
+        t.isCierre &&
+        (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO')
+      ) {
         running = Number(t.totalMedicamento) || 0;
       } else if (!t.isCierre) {
         const amount = Number(t.amount) || 0;
@@ -2697,6 +2753,44 @@ const App = () => {
                   value={configMedSearch}
                   onChange={(e) => setConfigMedSearch(e.target.value)}
                 />
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-slate-800 text-sm">Ajuste Manual de Saldo</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Permite corregir el saldo base de un medicamento. La app seguira calculando desde este ajuste.
+              </p>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <SelectLabel
+                  label="Medicamento"
+                  name="adjustMedId"
+                  options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
+                  isObject
+                  value={adjustMedId}
+                  onChange={(e) => setAdjustMedId(e.target.value)}
+                />
+                <InputLabel
+                  label="Nuevo Saldo"
+                  name="adjustBalance"
+                  type="number"
+                  min="0"
+                  value={adjustBalanceValue}
+                  onChange={(e) => setAdjustBalanceValue(e.target.value)}
+                />
+                <SelectLabel
+                  label="Farmaceutico"
+                  name="adjustPharmacist"
+                  options={pharmacists}
+                  value={adjustPharmacist}
+                  onChange={(e) => setAdjustPharmacist(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={applyManualBalanceAdjustment}
+                  className="bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700"
+                >
+                  Aplicar Ajuste
+                </button>
               </div>
             </div>
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
