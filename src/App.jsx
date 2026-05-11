@@ -1251,6 +1251,22 @@ const App = () => {
     const sortByDate = (a, b) => getTransactionTimestamp(b) - getTransactionTimestamp(a);
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
   }, [transactions, selectedMedId, kardexSearch]);
+  const kardexBalanceById = useMemo(() => {
+    const medItems = transactions
+      .filter((t) => t.medId === selectedMedId)
+      .slice()
+      .sort((a, b) => getTransactionTimestamp(a) - getTransactionTimestamp(b));
+    let running = 0;
+    const balanceMap = {};
+    medItems.forEach((t) => {
+      if (!t.isCierre) {
+        const amount = Number(t.amount) || 0;
+        running += t.type === 'IN' ? amount : -amount;
+      }
+      balanceMap[t.id] = running;
+    });
+    return balanceMap;
+  }, [transactions, selectedMedId]);
 
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
@@ -2090,6 +2106,7 @@ const App = () => {
                   <tr className="bg-slate-50 border-b border-slate-200">
                     <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
                     <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
+                    <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Saldo</th>
                     <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
                     <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
                     <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
@@ -2115,6 +2132,11 @@ const App = () => {
                             {t.amount}
                           </span>
                         )}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className="inline-flex items-center justify-center min-w-[72px] px-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
+                          {kardexBalanceById[t.id] ?? 0}
+                        </span>
                       </td>
                       <td className="px-6 py-4 font-medium text-slate-700 text-center">
                         {t.isCierre ? (
@@ -2150,7 +2172,7 @@ const App = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex gap-2 justify-center">
+                        <div className="flex gap-2 justify-center items-center min-w-[150px] mx-auto">
                           {!t.isCierre && (
                             <button
                               onClick={() => {
@@ -2164,6 +2186,14 @@ const App = () => {
                             >
                               Editar
                             </button>
+                          )}
+                          {t.isCierre && (
+                            <span
+                              aria-hidden="true"
+                              className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-transparent invisible"
+                            >
+                              Editar
+                            </span>
                           )}
                           <button
                             onClick={() => {
@@ -2183,7 +2213,7 @@ const App = () => {
                   ))}
                   {recentTransactions.length === 0 && (
                     <tr>
-                      <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
+                      <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={8}>
                         Sin rebajos en la ultima semana.
                       </td>
                     </tr>
@@ -2215,6 +2245,7 @@ const App = () => {
                     <tr className="bg-slate-50 border-b border-slate-200">
                       <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Fecha</th>
                       <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Movimiento</th>
+                      <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Saldo</th>
                       <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Servicio / Cama</th>
                       <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Tipo de Receta</th>
                       <th className="px-6 py-3 font-bold text-slate-500 text-[10px] uppercase text-center">Receta</th>
@@ -2237,6 +2268,11 @@ const App = () => {
                               {t.amount}
                             </span>
                           )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className="inline-flex items-center justify-center min-w-[72px] px-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
+                            {kardexBalanceById[t.id] ?? 0}
+                          </span>
                         </td>
                         <td className="px-6 py-4 font-medium text-slate-700 text-center">
                           {t.isCierre ? (
@@ -2266,8 +2302,8 @@ const App = () => {
                         <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
                           {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex gap-2 justify-center">
+                      <td className="px-6 py-4">
+                          <div className="flex gap-2 justify-center items-center min-w-[150px] mx-auto">
                             {!t.isCierre && (
                               <button
                                 onClick={() => {
@@ -2281,6 +2317,14 @@ const App = () => {
                               >
                                 Editar
                               </button>
+                            )}
+                            {t.isCierre && (
+                              <span
+                                aria-hidden="true"
+                                className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-transparent invisible"
+                              >
+                                Editar
+                              </span>
                             )}
                             <button
                               onClick={() => {
@@ -2300,7 +2344,7 @@ const App = () => {
                     ))}
                     {historicTransactions.length === 0 && (
                       <tr>
-                        <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={7}>
+                        <td className="px-6 py-6 text-center text-xs text-slate-400" colSpan={8}>
                           Sin historico anterior.
                         </td>
                       </tr>
