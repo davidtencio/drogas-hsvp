@@ -50,6 +50,7 @@ const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
+const AUTO_MED_NAME_PATTERN = /^MED\s+\d+$/i;
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -80,6 +81,9 @@ const App = () => {
   const [showHistoric, setShowHistoric] = useState(false);
   const [kardexSearch, setKardexSearch] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [configMedSearch, setConfigMedSearch] = useState('');
+  const [editingConfigMedId, setEditingConfigMedId] = useState(null);
+  const [configMedNameDraft, setConfigMedNameDraft] = useState('');
   const [kardexRecentPage, setKardexRecentPage] = useState(1);
   const [kardexHistoricPage, setKardexHistoricPage] = useState(1);
   const [auditoriaPage, setAuditoriaPage] = useState(1);
@@ -157,6 +161,23 @@ const App = () => {
     const normalized = cleaned.replace(/\./g, '').replace(',', '.');
     const num = parseFloat(normalized);
     return Number.isFinite(num) ? num : 0;
+  };
+  const startConfigMedicationEdit = (medication) => {
+    setEditingConfigMedId(medication.id);
+    setConfigMedNameDraft(medication.name || '');
+  };
+  const saveConfigMedicationName = () => {
+    if (!editingConfigMedId) return;
+    const normalizedName = toUpper(configMedNameDraft);
+    if (!normalizedName) {
+      alert('Ingrese un nombre valido para el medicamento.');
+      return;
+    }
+    setMedications(
+      medications.map((m) => (m.id === editingConfigMedId ? { ...m, name: normalizedName } : m)),
+    );
+    setEditingConfigMedId(null);
+    setConfigMedNameDraft('');
   };
 
   const getRxProgress = (t) => {
@@ -1056,6 +1077,17 @@ const App = () => {
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
   const auditoriaPageData = useMemo(() => paginate(filteredExpedientes, auditoriaPage), [filteredExpedientes, auditoriaPage]);
   const bitacoraPageData = useMemo(() => paginate(sortedBitacora, bitacoraPage), [sortedBitacora, bitacoraPage]);
+  const configMedicationRows = useMemo(() => {
+    const query = toUpper(configMedSearch);
+    return [...medications]
+      .filter((m) => !query || toUpper(m.name).includes(query) || toUpper(m.id).includes(query))
+      .sort((a, b) => {
+        const aAuto = AUTO_MED_NAME_PATTERN.test(a.name || '');
+        const bAuto = AUTO_MED_NAME_PATTERN.test(b.name || '');
+        if (aAuto !== bAuto) return aAuto ? -1 : 1;
+        return (a.name || '').localeCompare(b.name || '', 'es');
+      });
+  }, [medications, configMedSearch]);
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -1388,6 +1420,7 @@ const App = () => {
           <NavItem active={activeTab === 'auditoria'} onClick={() => setActiveTab('auditoria')} icon={<ShieldCheck size={18} />} label="Revisiones" />
           <NavItem active={activeTab === 'bitacora'} onClick={() => setActiveTab('bitacora')} icon={<FileText size={18} />} label="Bitacora" />
           <NavItem active={activeTab === 'solicitud'} onClick={() => setActiveTab('solicitud')} icon={<ClipboardList size={18} />} label="Solicitud Reposicion" />
+          <NavItem active={activeTab === 'config'} onClick={() => setActiveTab('config')} icon={<Database size={18} />} label="Configuracion" />
         </div>
 
         <div className="p-6 border-t border-slate-800">
@@ -1416,6 +1449,8 @@ const App = () => {
                       ? 'Bitacora de Jornada'
                       : activeTab === 'solicitud'
                         ? 'Solicitud de Reposicion'
+                        : activeTab === 'config'
+                          ? 'Configuracion'
                         : 'Resumen Operativo'}
             </h2>
             <p className="text-slate-500 text-sm">Control centralizado y validacion farmacoterapeutica.</p>
@@ -2322,6 +2357,87 @@ const App = () => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+        {activeTab === 'config' && (
+          <div className="space-y-4">
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-slate-800 text-sm">Configuracion de Medicamentos</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Renombre los medicamentos para corregir etiquetas y mostrar el nombre real en todo el sistema.
+              </p>
+              <div className="mt-4">
+                <InputLabel
+                  label="Buscar por nombre o id"
+                  name="configMedSearch"
+                  value={configMedSearch}
+                  onChange={(e) => setConfigMedSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-3 border-b border-slate-100 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500 grid grid-cols-12 gap-3">
+                <div className="col-span-3">ID</div>
+                <div className="col-span-5">Nombre</div>
+                <div className="col-span-2 text-center">Tipo</div>
+                <div className="col-span-2 text-right">Accion</div>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {configMedicationRows.map((med) => (
+                  <div key={med.id} className="px-6 py-3 grid grid-cols-12 gap-3 items-center">
+                    <div className="col-span-3 text-xs font-semibold text-slate-500">{med.id}</div>
+                    <div className="col-span-5">
+                      {editingConfigMedId === med.id ? (
+                        <input
+                          value={configMedNameDraft}
+                          onChange={(e) => setConfigMedNameDraft(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium uppercase"
+                        />
+                      ) : (
+                        <span className={`text-sm font-semibold ${AUTO_MED_NAME_PATTERN.test(med.name || '') ? 'text-rose-600' : 'text-slate-700'}`}>
+                          {med.name}
+                        </span>
+                      )}
+                    </div>
+                    <div className="col-span-2 text-center text-xs font-bold text-slate-500 uppercase">{med.type}</div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                      {editingConfigMedId === med.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={saveConfigMedicationName}
+                            className="bg-emerald-600 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-700"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingConfigMedId(null);
+                              setConfigMedNameDraft('');
+                            }}
+                            className="bg-slate-200 text-slate-700 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-300"
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startConfigMedicationEdit(med)}
+                          className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700"
+                        >
+                          Renombrar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {configMedicationRows.length === 0 && (
+                  <div className="px-6 py-6 text-xs text-slate-400">No hay medicamentos que coincidan con la busqueda.</div>
+                )}
               </div>
             </div>
           </div>
