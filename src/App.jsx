@@ -392,10 +392,22 @@ const App = () => {
     if (Number.isFinite(t?.createdAt)) return t.createdAt;
     return 0;
   };
+  const compareTransactionsAsc = (a, b) => {
+    const aDate = getTransactionTimestamp(a);
+    const bDate = getTransactionTimestamp(b);
+    if (aDate !== bDate) return aDate - bDate;
+    const aCreated = Number.isFinite(a?.createdAt) ? a.createdAt : 0;
+    const bCreated = Number.isFinite(b?.createdAt) ? b.createdAt : 0;
+    if (aCreated !== bCreated) return aCreated - bCreated;
+    const aId = Number(a?.id) || 0;
+    const bId = Number(b?.id) || 0;
+    return aId - bId;
+  };
+  const compareTransactionsDesc = (a, b) => compareTransactionsAsc(b, a);
   const getLast24hClose = (items, medId) =>
     items
       .filter((t) => t.medId === medId && t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')
-      .sort((a, b) => getTransactionTimestamp(b) - getTransactionTimestamp(a))[0];
+      .sort(compareTransactionsDesc)[0];
   const isQuotaExceededError = (error) =>
     error &&
     (QUOTA_EXCEEDED_ERRORS.includes(error.name) ||
@@ -1260,14 +1272,14 @@ const App = () => {
         historic.push(t);
       }
     });
-    const sortByDate = (a, b) => getTransactionTimestamp(b) - getTransactionTimestamp(a);
+    const sortByDate = (a, b) => compareTransactionsDesc(a, b);
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
   }, [transactions, selectedMedId, kardexSearch]);
   const kardexBalanceById = useMemo(() => {
     const medItems = transactions
       .filter((t) => t.medId === selectedMedId)
       .slice()
-      .sort((a, b) => getTransactionTimestamp(a) - getTransactionTimestamp(b));
+      .sort(compareTransactionsAsc);
     let running = 0;
     const balanceMap = {};
     medItems.forEach((t) => {
