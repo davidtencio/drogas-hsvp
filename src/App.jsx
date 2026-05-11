@@ -44,7 +44,7 @@ const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRES
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
 const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 10);
-const MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
+const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
 const MAX_PENDING_WRITES = 200;
 const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
@@ -84,6 +84,8 @@ const App = () => {
   const [configMedSearch, setConfigMedSearch] = useState('');
   const [editingConfigMedId, setEditingConfigMedId] = useState(null);
   const [configMedNameDraft, setConfigMedNameDraft] = useState('');
+  const [maxRecordsLimit, setMaxRecordsLimit] = useState(DEFAULT_MAX_RECORDS);
+  const [maxRecordsDraft, setMaxRecordsDraft] = useState(String(DEFAULT_MAX_RECORDS));
   const [kardexRecentPage, setKardexRecentPage] = useState(1);
   const [kardexHistoricPage, setKardexHistoricPage] = useState(1);
   const [auditoriaPage, setAuditoriaPage] = useState(1);
@@ -132,6 +134,7 @@ const App = () => {
   const retryCountRef = useRef(0);
   const createdAtBackfillRef = useRef({});
   const kardexSearchRef = useRef(null);
+  const restoreInputRef = useRef(null);
   const [auditoriaSearch, setAuditoriaSearch] = useState('');
   const ORG_ID = 'hsvp';
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
@@ -178,6 +181,157 @@ const App = () => {
     );
     setEditingConfigMedId(null);
     setConfigMedNameDraft('');
+  };
+  const saveMaxRecordsLimit = async () => {
+    const parsed = Number.parseInt(maxRecordsDraft, 10);
+    if (!Number.isFinite(parsed) || parsed < 1000) {
+      alert('Ingrese un limite valido (minimo 1000).');
+      return;
+    }
+    try {
+      await setDoc(doc(db, dataDocPath), { maxRecords: parsed }, { merge: true });
+      setMaxRecordsLimit(parsed);
+      setCloudStatus('Sincronizado');
+      alert('Limite de registros actualizado.');
+    } catch {
+      setCloudStatus('Sin conexion');
+      alert('No se pudo actualizar el limite de registros.');
+    }
+  };
+  const downloadDatabaseBackup = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      orgId: ORG_ID,
+      data: {
+        medications,
+        selectedMedId,
+        maxRecords: maxRecordsLimit,
+        services,
+        pharmacists,
+        condiciones,
+        transactions,
+        expedientes,
+        bitacora,
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `backup_drogas_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+  const restoreDatabaseBackup = async (file) => {
+    if (!file || !authUser) return;
+    setCloudStatus('Restaurando...');
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      const data = parsed?.data || parsed || {};
+      const incomingMedications = Array.isArray(data.medications) ? data.medications : [];
+      const incomingTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+      const incomingExpedientes = Array.isArray(data.expedientes) ? data.expedientes : [];
+      const incomingBitacora = Array.isArray(data.bitacora) ? data.bitacora : [];
+      const incomingServices = Array.isArray(data.services) ? data.services : [];
+      const incomingPharmacists = Array.isArray(data.pharmacists) ? data.pharmacists : [];
+      const incomingCondiciones = Array.isArray(data.condiciones) ? data.condiciones : [];
+      const incomingSelectedMedId =
+        typeof data.selectedMedId === 'string' && data.selectedMedId ? data.selectedMedId : incomingMedications[0]?.id;
+      const incomingMaxRecords =
+        Number.isFinite(data.maxRecords) && data.maxRecords > 0 ? data.maxRecords : maxRecordsLimit;
+      if (incomingMedications.length === 0) {
+        alert('El archivo no contiene medicamentos validos para restaurar.');
+        setCloudStatus('Sincronizado');
+        return;
+      }
+      const confirmed = window.confirm(
+        'Esto reemplazara por completo la base actual en Firebase con los datos del archivo. ¿Desea continuar?',
+      );
+      if (!confirmed) {
+        setCloudStatus('Sincronizado');
+        return;
+      }
+
+      const chunk = (items, size = 450) => {
+        const groups = [];
+        for (let i = 0; i < items.length; i += size) groups.push(items.slice(i, i + size));
+        return groups;
+      };
+      const batchDeleteByList = async (collectionName, items) => {
+        for (const group of chunk(items)) {
+          const batch = writeBatch(db);
+          group.forEach((item) => batch.delete(doc(db, dataDocPath, collectionName, String(item.id))));
+          await batch.commit();
+        }
+      };
+      const batchSetByList = async (collectionName, items) => {
+        for (const group of chunk(items)) {
+          const batch = writeBatch(db);
+          group.forEach((item) => batch.set(doc(db, dataDocPath, collectionName, String(item.id)), item, { merge: true }));
+          await batch.commit();
+        }
+      };
+      const batchReplaceCatalog = async (collectionName, currentList, incomingList) => {
+        const deleteBatch = writeBatch(db);
+        currentList.forEach((name) => deleteBatch.delete(doc(db, dataDocPath, collectionName, toCatalogId(name))));
+        await deleteBatch.commit();
+        for (const group of chunk(incomingList)) {
+          const batch = writeBatch(db);
+          group.forEach((name) => {
+            const normalized = toUpper(name);
+            const id = toCatalogId(normalized);
+            batch.set(doc(db, dataDocPath, collectionName, id), { id, name: normalized, createdAt: Date.now() }, { merge: true });
+          });
+          await batch.commit();
+        }
+      };
+
+      await batchDeleteByList('transactions', transactions);
+      await batchDeleteByList('expedientes', expedientes);
+      await batchDeleteByList('bitacora', bitacora);
+      await batchSetByList('transactions', incomingTransactions);
+      await batchSetByList('expedientes', incomingExpedientes);
+      await batchSetByList('bitacora', incomingBitacora);
+      await batchReplaceCatalog('catalog_services', services, incomingServices);
+      await batchReplaceCatalog('catalog_pharmacists', pharmacists, incomingPharmacists);
+      await batchReplaceCatalog('catalog_condiciones', condiciones, incomingCondiciones);
+      await setDoc(
+        doc(db, dataDocPath),
+        {
+          medications: incomingMedications,
+          selectedMedId: incomingSelectedMedId || incomingMedications[0].id,
+          maxRecords: incomingMaxRecords,
+        },
+        { merge: true },
+      );
+
+      pendingWritesRef.current = [];
+      setPendingCount(0);
+      setQueueOverflow(false);
+      localStorage.removeItem('pharmaPendingWrites');
+      localStorage.removeItem('pharmaControlData');
+      setMedications(incomingMedications);
+      setSelectedMedId(incomingSelectedMedId || incomingMedications[0].id);
+      setMaxRecordsLimit(incomingMaxRecords);
+      setMaxRecordsDraft(String(incomingMaxRecords));
+      setServices(incomingServices);
+      setPharmacists(incomingPharmacists);
+      setCondiciones(incomingCondiciones);
+      setTransactions(incomingTransactions);
+      setExpedientes(incomingExpedientes);
+      setBitacora(incomingBitacora);
+      setCloudStatus('Sincronizado');
+      alert('Restauracion completada.');
+    } catch (error) {
+      console.error(error);
+      setCloudStatus('Sin conexion');
+      alert('No se pudo restaurar el archivo JSON.');
+    } finally {
+      if (restoreInputRef.current) restoreInputRef.current.value = '';
+    }
   };
 
   const getRxProgress = (t) => {
@@ -388,6 +542,8 @@ const App = () => {
         setPharmacists(INITIAL_PHARMACISTS);
         setCondiciones(INITIAL_CONDICIONES);
         setSelectedMedId(INITIAL_MEDICATIONS[0].id);
+        setMaxRecordsLimit(DEFAULT_MAX_RECORDS);
+        setMaxRecordsDraft(String(DEFAULT_MAX_RECORDS));
         setPendingCount(0);
         setSyncErrors([]);
         setQueueOverflow(false);
@@ -471,6 +627,10 @@ const App = () => {
           if (data.medications?.length) {
             loadedMedications = data.medications;
             setMedications(data.medications);
+          }
+          if (Number.isFinite(data.maxRecords) && data.maxRecords > 0) {
+            setMaxRecordsLimit(data.maxRecords);
+            setMaxRecordsDraft(String(data.maxRecords));
           }
           if (data.services?.length) legacyServices = data.services;
           if (data.pharmacists?.length) legacyPharmacists = data.pharmacists;
@@ -573,7 +733,7 @@ const App = () => {
           let lastDoc = null;
           let usedFallback = false;
           let hadError = false;
-          while (items.length < MAX_RECORDS) {
+          while (items.length < maxRecordsLimit) {
             try {
               const q = lastDoc
                 ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
@@ -602,7 +762,7 @@ const App = () => {
               }
             }
           }
-          setter(items.slice(0, MAX_RECORDS));
+          setter(items.slice(0, maxRecordsLimit));
           return { items, usedFallback, hadError };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
@@ -666,6 +826,10 @@ const App = () => {
           if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
           if (stored.condiciones?.length) setCondiciones(stored.condiciones);
           if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
+          if (Number.isFinite(stored.maxRecords) && stored.maxRecords > 0) {
+            setMaxRecordsLimit(stored.maxRecords);
+            setMaxRecordsDraft(String(stored.maxRecords));
+          }
           if (stored.bitacora?.length) setBitacora(stored.bitacora);
         } catch {
           localStorage.removeItem('pharmaControlData');
@@ -782,18 +946,20 @@ const App = () => {
       pharmacists,
       condiciones,
       selectedMedId,
+      maxRecords: maxRecordsLimit,
     };
     safeSetLocalStorage('pharmaControlData', JSON.stringify(localPayload));
     if (!cloudReady || !authUser) return;
     const cloudPayload = {
       medications,
       selectedMedId,
+      maxRecords: maxRecordsLimit,
     };
     setCloudStatus('Sincronizando...');
     setDoc(doc(db, dataDocPath), cloudPayload, { merge: true })
       .then(() => setCloudStatus('Sincronizado'))
       .catch(() => setCloudStatus('Sin conexion'));
-  }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId]);
+  }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId, maxRecordsLimit]);
 
   const handleRollover = async () => {
     if (!window.confirm('Se ha alcanzado el limite de seguridad de registros. El sistema debe realizar un cierre de periodo automatico.\n\nEsto descargara un respaldo, limpiara el historial y mantendra los saldos actuales.\n\n¿Desea proceder?')) {
@@ -909,14 +1075,14 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (transactions.length >= MAX_RECORDS && cloudReady && authUser) {
+    if (transactions.length >= maxRecordsLimit && cloudReady && authUser) {
       // Add a small delay/debounce to avoid immediate trigger on load if just over limit
       const timer = setTimeout(() => {
         handleRollover();
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [transactions.length, cloudReady, authUser]);
+  }, [transactions.length, cloudReady, authUser, maxRecordsLimit]);
 
   // Computations
   const sortedMedications = useMemo(() => {
@@ -1088,6 +1254,12 @@ const App = () => {
         return (a.name || '').localeCompare(b.name || '', 'es');
       });
   }, [medications, configMedSearch]);
+  const recordsUsage = useMemo(() => {
+    const limit = Math.max(1, maxRecordsLimit);
+    const used = transactions.length;
+    const pct = Math.min(100, Math.round((used / limit) * 100));
+    return { used, limit, pct };
+  }, [transactions.length, maxRecordsLimit]);
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -2368,6 +2540,62 @@ const App = () => {
               <p className="text-xs text-slate-500 mt-1">
                 Renombre los medicamentos para corregir etiquetas y mostrar el nombre real en todo el sistema.
               </p>
+              <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-500">Uso de Registros</p>
+                    <p className="text-sm font-bold text-slate-800">
+                      {recordsUsage.used.toLocaleString('es-CR')} / {recordsUsage.limit.toLocaleString('es-CR')} ({recordsUsage.pct}%)
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1000"
+                      step="1000"
+                      value={maxRecordsDraft}
+                      onChange={(e) => setMaxRecordsDraft(e.target.value)}
+                      className="w-36 bg-white border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={saveMaxRecordsLimit}
+                      className="bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-800"
+                    >
+                      Actualizar Limite
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 h-3 w-full bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    style={{ width: `${recordsUsage.pct}%` }}
+                    className={`h-full ${recordsUsage.pct >= 90 ? 'bg-rose-600' : recordsUsage.pct >= 70 ? 'bg-amber-500' : 'bg-emerald-600'}`}
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={downloadDatabaseBackup}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-emerald-700"
+                >
+                  Descargar Base JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => restoreInputRef.current?.click()}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-700"
+                >
+                  Cargar y Restaurar JSON
+                </button>
+                <input
+                  ref={restoreInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => restoreDatabaseBackup(e.target.files?.[0])}
+                />
+              </div>
               <div className="mt-4">
                 <InputLabel
                   label="Buscar por nombre o id"
