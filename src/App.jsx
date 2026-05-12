@@ -94,6 +94,7 @@ const App = () => {
   const [bitacoraPage, setBitacoraPage] = useState(1);
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
   const [cierreTurnoValue, setCierreTurnoValue] = useState('SEGUNDO');
+  const [crossCheckPharmacistValue, setCrossCheckPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
   const [securityPromptValue, setSecurityPromptValue] = useState('');
   const securityPromptResolverRef = useRef(null);
@@ -1527,6 +1528,21 @@ const App = () => {
       };
       setTransactions([newCierre, ...transactions]);
       enqueueWrite({ type: 'set', collection: 'transactions', id: newCierre.id, data: newCierre });
+    } else if (modalType === 'cross-check') {
+      const selectedVerifier = toUpper(formData.get('crossCheckPharmacist'));
+      if (!editingTransactionId || !selectedVerifier) return;
+      const updatedTransactions = transactions.map((t) =>
+        t.id === editingTransactionId
+          ? {
+              ...t,
+              crossCheckPharmacist: selectedVerifier,
+              crossCheckedAt: now,
+            }
+          : t,
+      );
+      const updatedTx = updatedTransactions.find((t) => t.id === editingTransactionId);
+      setTransactions(updatedTransactions);
+      if (updatedTx) enqueueWrite({ type: 'set', collection: 'transactions', id: updatedTx.id, data: updatedTx });
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -2295,6 +2311,23 @@ const App = () => {
                             </span>
                           )}
                           <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTransactionId(t.id);
+                              setCrossCheckPharmacistValue(t.crossCheckPharmacist || pharmacists[0] || '');
+                              setModalType('cross-check');
+                              setShowModal(true);
+                            }}
+                            className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                              t.crossCheckPharmacist
+                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                            }`}
+                            title={t.crossCheckPharmacist ? `Validado por ${t.crossCheckPharmacist}` : 'Control cruzado de saldo'}
+                          >
+                            {t.crossCheckPharmacist ? 'Validado' : 'Cruzar'}
+                          </button>
+                          <button
                             onClick={() => {
                               const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
                               if (!confirmDelete) return;
@@ -2425,6 +2458,23 @@ const App = () => {
                                 Editar
                               </span>
                             )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingTransactionId(t.id);
+                                setCrossCheckPharmacistValue(t.crossCheckPharmacist || pharmacists[0] || '');
+                                setModalType('cross-check');
+                                setShowModal(true);
+                              }}
+                              className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                                t.crossCheckPharmacist
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                              }`}
+                              title={t.crossCheckPharmacist ? `Validado por ${t.crossCheckPharmacist}` : 'Control cruzado de saldo'}
+                            >
+                              {t.crossCheckPharmacist ? 'Validado' : 'Cruzar'}
+                            </button>
                             <button
                               onClick={() => {
                                 const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
@@ -2945,6 +2995,8 @@ const App = () => {
                             ? 'Nuevo Registro de Bitacora'
                             : modalType === 'cierre'
                               ? 'Cierre de Inventario'
+                              : modalType === 'cross-check'
+                                ? 'Control Cruzado de Saldo'
                               : modalType === 'sync-log'
                                 ? 'Log de Sincronizacion'
                                 : modalType === 'med-edit'
@@ -3154,6 +3206,17 @@ const App = () => {
                     />
                   </div>
                   <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
+                </>
+              ) : modalType === 'cross-check' ? (
+                <>
+                  <SelectLabel
+                    label="Farmaceutico Verificador"
+                    name="crossCheckPharmacist"
+                    options={pharmacists}
+                    defaultValue={crossCheckPharmacistValue}
+                    onChange={(e) => setCrossCheckPharmacistValue(e.target.value)}
+                    required
+                  />
                 </>
               ) : modalType === 'bitacora' ? (
                 <>
