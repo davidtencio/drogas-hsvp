@@ -1002,7 +1002,7 @@ const App = () => {
       return;
     }
 
-    const itemsToRequest = currentInventory
+    const itemsToRequest = requestInventory
       .filter((med) => selectedRequestMeds[med.id] && (requestQuantities[med.id] || 0) > 0)
       .map((med) => ({
         name: med.name,
@@ -1429,7 +1429,7 @@ const App = () => {
     () => currentInventory.find((m) => m.id === selectedMedId)?.stock ?? 0,
     [currentInventory, selectedMedId],
   );
-
+  const requestInventory = useMemo(() => [...currentInventory], [currentInventory]);
   const handleSave = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -2138,7 +2138,7 @@ const App = () => {
                 </span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-slate-100">
-                {currentInventory.map((med) => (
+                {requestInventory.map((med) => (
                   <div
                     key={med.id}
                     className="bg-white p-6 hover:bg-slate-50 transition-colors cursor-pointer"
@@ -2809,7 +2809,7 @@ const App = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {currentInventory.map((med) => (
+                    {requestInventory.map((med) => (
                       <tr key={med.id} className={`hover:bg-slate-50 transition-colors ${selectedRequestMeds[med.id] ? 'bg-emerald-50/30' : ''}`}>
                         <td className="px-6 py-3 text-center">
                           <input
@@ -3763,3 +3763,5 @@ const Pagination = ({ page, totalPages, onPrev, onNext }) => (
 );
 
 export default App;
+
+
