@@ -98,6 +98,8 @@ const App = () => {
   const [crossCheckPharmacistValue, setCrossCheckPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [openRxPharmacistValue, setOpenRxPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [openRxAmountValue, setOpenRxAmountValue] = useState('');
+  const [repeatConditionValue, setRepeatConditionValue] = useState(INITIAL_CONDICIONES[0] || '');
+  const [repeatPharmacistValue, setRepeatPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
   const [securityPromptValue, setSecurityPromptValue] = useState('');
   const securityPromptResolverRef = useRef(null);
@@ -105,6 +107,7 @@ const App = () => {
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
   const [pendingOpenRxTransaction, setPendingOpenRxTransaction] = useState(null);
+  const [pendingRepeatExpediente, setPendingRepeatExpediente] = useState(null);
   // Data States moved up
   const [transactions, setTransactions] = useState([
     {
@@ -1574,6 +1577,22 @@ const App = () => {
       handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
       setPendingOpenRxTransaction(null);
       setOpenRxAmountValue('');
+    } else if (modalType === 'auditoria-repeat') {
+      if (!pendingRepeatExpediente) return;
+      const selectedCondition = toUpper(formData.get('repeatCondicion'));
+      const selectedPharmacist = toUpper(formData.get('repeatFarmaceutico'));
+      if (!selectedCondition || !selectedPharmacist) return;
+      const duplicated = {
+        ...pendingRepeatExpediente,
+        id: Date.now(),
+        fecha: now,
+        createdAt: Date.now(),
+        condicion: selectedCondition,
+        farmaceutico: selectedPharmacist,
+      };
+      setExpedientes([duplicated, ...expedientes]);
+      enqueueWrite({ type: 'set', collection: 'expedientes', id: duplicated.id, data: duplicated });
+      setPendingRepeatExpediente(null);
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -2620,23 +2639,11 @@ const App = () => {
                         <button
                           type="button"
                           onClick={() => {
-                            const now = new Date().toLocaleString('es-CR', {
-                              year: 'numeric',
-                              month: 'numeric',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: 'numeric',
-                              hour12: true,
-                              timeZone: CR_TIMEZONE,
-                            });
-                            const duplicated = {
-                              ...e,
-                              id: Date.now(),
-                              fecha: now,
-                              createdAt: Date.now(),
-                            };
-                            setExpedientes([duplicated, ...expedientes]);
-                            enqueueWrite({ type: 'set', collection: 'expedientes', id: duplicated.id, data: duplicated });
+                            setPendingRepeatExpediente(e);
+                            setRepeatConditionValue(e.condicion || condiciones[0] || '');
+                            setRepeatPharmacistValue(e.farmaceutico || pharmacists[0] || '');
+                            setModalType('auditoria-repeat');
+                            setShowModal(true);
                           }}
                           className="bg-blue-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700"
                           title="Repetir revision"
@@ -3060,8 +3067,10 @@ const App = () => {
                       ? 'Editar Movimiento'
                       : modalType === 'auditoria-edit'
                         ? 'Editar Expediente'
-                        : modalType === 'auditoria-rate-change'
+                      : modalType === 'auditoria-rate-change'
                           ? 'Cambio de Velocidad Infusion'
+                          : modalType === 'auditoria-repeat'
+                            ? 'Repetir Revision'
                           : modalType === 'bitacora'
                             ? 'Nuevo Registro de Bitacora'
                             : modalType === 'cierre'
@@ -3308,6 +3317,25 @@ const App = () => {
                     options={pharmacists}
                     defaultValue={openRxPharmacistValue}
                     onChange={(e) => setOpenRxPharmacistValue(e.target.value)}
+                    required
+                  />
+                </>
+              ) : modalType === 'auditoria-repeat' ? (
+                <>
+                  <SelectLabel
+                    label="Condicion"
+                    name="repeatCondicion"
+                    options={condiciones}
+                    defaultValue={repeatConditionValue}
+                    onChange={(e) => setRepeatConditionValue(e.target.value)}
+                    required
+                  />
+                  <SelectLabel
+                    label="Farmaceutico"
+                    name="repeatFarmaceutico"
+                    options={pharmacists}
+                    defaultValue={repeatPharmacistValue}
+                    onChange={(e) => setRepeatPharmacistValue(e.target.value)}
                     required
                   />
                 </>
