@@ -1505,10 +1505,7 @@ const App = () => {
       }
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
-      const computedTotalMedicamento =
-        cierreTurno === 'CIERRE 24 HORAS'
-          ? Number(selectedCurrentStock) || 0
-          : parseInt(formData.get('totalMedicamento'), 10) || 0;
+      const computedTotalMedicamento = Number(selectedCurrentStock) || 0;
       const newCierre = {
         id: Date.now(),
         date: now,
@@ -3148,17 +3145,13 @@ const App = () => {
                   />
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel label="Total de Recetas" name="totalRecetas" type="number" required />
-                    {cierreTurnoValue === 'CIERRE 24 HORAS' ? (
-                      <InputLabel
-                        label="Total de Medicamento"
-                        name="totalMedicamento"
-                        type="number"
-                        value={selectedCurrentStock}
-                        readOnly
-                      />
-                    ) : (
-                      <InputLabel label="Total de Medicamento" name="totalMedicamento" type="number" required />
-                    )}
+                    <InputLabel
+                      label="Total de Medicamento"
+                      name="totalMedicamento"
+                      type="number"
+                      value={selectedCurrentStock}
+                      readOnly
+                    />
                   </div>
                   <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
                 </>
