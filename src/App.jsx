@@ -1671,10 +1671,10 @@ const App = () => {
 
   const getKardexRowClass = (t) => {
     if (t.isCierre) {
-      return t.cierreTurno === 'CIERRE 24 HORAS' ? 'bg-rose-50' : 'bg-amber-50';
+      return t.cierreTurno === 'CIERRE 24 HORAS' ? 'bg-rose-50 hover:bg-rose-50' : 'bg-amber-50 hover:bg-amber-50';
     }
     if (t.type === 'IN' && t.service === 'INGRESO A INVENTARIO') {
-      return 'bg-emerald-50';
+      return 'bg-emerald-50 hover:bg-emerald-50';
     }
     return '';
   };
