@@ -11,6 +11,7 @@ import {
   FileText,
   Filter,
   History,
+  Bell,
   Package,
   PlusCircle,
   Search,
@@ -2318,14 +2319,15 @@ const App = () => {
                               setModalType('cross-check');
                               setShowModal(true);
                             }}
-                            className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                            className={`p-1 rounded-md border ${
                               t.crossCheckPharmacist
-                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                                : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
                             }`}
                             title={t.crossCheckPharmacist ? `Validado por ${t.crossCheckPharmacist}` : 'Control cruzado de saldo'}
+                            aria-label="Control cruzado"
                           >
-                            {t.crossCheckPharmacist ? 'Validado' : 'Cruzar'}
+                            <Bell size={14} />
                           </button>
                           <button
                             onClick={() => {
@@ -2466,14 +2468,15 @@ const App = () => {
                                 setModalType('cross-check');
                                 setShowModal(true);
                               }}
-                              className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                              className={`p-1 rounded-md border ${
                                 t.crossCheckPharmacist
-                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                                  : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
                               }`}
                               title={t.crossCheckPharmacist ? `Validado por ${t.crossCheckPharmacist}` : 'Control cruzado de saldo'}
+                              aria-label="Control cruzado"
                             >
-                              {t.crossCheckPharmacist ? 'Validado' : 'Cruzar'}
+                              <Bell size={14} />
                             </button>
                             <button
                               onClick={() => {
