@@ -54,6 +54,7 @@ const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, 
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
 const AUTO_MED_NAME_PATTERN = /^MED\s+\d+$/i;
 const PRIORITY_MEDICATION_ORDER = [
+  'MORFINA 15 MG',
   'DIAZEPAM 10 MG',
   'FENTANYL 50 MCG',
   'MIDAZOLAM 15 MG',
