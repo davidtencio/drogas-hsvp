@@ -2617,6 +2617,32 @@ const App = () => {
                         >
                           Editar
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const now = new Date().toLocaleString('es-CR', {
+                              year: 'numeric',
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: 'numeric',
+                              hour12: true,
+                              timeZone: CR_TIMEZONE,
+                            });
+                            const duplicated = {
+                              ...e,
+                              id: Date.now(),
+                              fecha: now,
+                              createdAt: Date.now(),
+                            };
+                            setExpedientes([duplicated, ...expedientes]);
+                            enqueueWrite({ type: 'set', collection: 'expedientes', id: duplicated.id, data: duplicated });
+                          }}
+                          className="bg-blue-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700"
+                          title="Repetir revision"
+                        >
+                          Repetir
+                        </button>
                         {e.dosis && e.dosis.toString().startsWith('INFUSION') && (
                           <button
                             onClick={() => {
