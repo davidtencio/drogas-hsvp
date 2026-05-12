@@ -53,6 +53,15 @@ const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
 const AUTO_MED_NAME_PATTERN = /^MED\s+\d+$/i;
+const PRIORITY_MEDICATION_ORDER = [
+  'DIAZEPAM 10 MG',
+  'FENTANYL 50 MCG',
+  'MIDAZOLAM 15 MG',
+  'FENOBARBITAL 50 MG',
+  'CLONAZEPAM 2 MG',
+  'DIAZEPAM 5 MG',
+  'LORAZEPAM 2 MG',
+];
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -1209,7 +1218,15 @@ const App = () => {
 
   // Computations
   const sortedMedications = useMemo(() => {
-    return [...medications].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const priorityIndex = new Map(PRIORITY_MEDICATION_ORDER.map((name, index) => [name, index]));
+    return [...medications].sort((a, b) => {
+      const aName = toUpper(a.name);
+      const bName = toUpper(b.name);
+      const aPriority = priorityIndex.has(aName) ? priorityIndex.get(aName) : Number.POSITIVE_INFINITY;
+      const bPriority = priorityIndex.has(bName) ? priorityIndex.get(bName) : Number.POSITIVE_INFINITY;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return aName.localeCompare(bName, 'es');
+    });
   }, [medications]);
 
   const currentInventory = useMemo(() => {
