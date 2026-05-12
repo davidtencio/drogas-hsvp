@@ -1404,6 +1404,36 @@ const App = () => {
     });
     return balanceMap;
   }, [transactions, selectedMedId]);
+  const totalReponerByCierreId = useMemo(() => {
+    const medItems = transactions
+      .filter((t) => t.medId === selectedMedId)
+      .slice()
+      .sort(compareTransactionsAsc);
+    const map = {};
+    medItems.forEach((t, idx) => {
+      if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
+      let previousCloseIdx = -1;
+      for (let i = idx - 1; i >= 0; i -= 1) {
+        const candidate = medItems[i];
+        if (candidate.isCierre && candidate.cierreTurno === 'CIERRE 24 HORAS') {
+          previousCloseIdx = i;
+          break;
+        }
+      }
+      const start = previousCloseIdx + 1;
+      let totalOut = 0;
+      let totalIn = 0;
+      for (let i = start; i <= idx; i += 1) {
+        const tx = medItems[i];
+        if (tx.isCierre) continue;
+        const amount = Number(tx.amount) || 0;
+        if (tx.type === 'OUT') totalOut += amount;
+        else if (tx.type === 'IN') totalIn += amount;
+      }
+      map[t.id] = totalOut - totalIn;
+    });
+    return map;
+  }, [transactions, selectedMedId]);
 
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
@@ -2332,7 +2362,11 @@ const App = () => {
                       </td>
                       <td className="px-6 py-4 text-center">
                         {t.isCierre ? (
-                          <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                          t.cierreTurno === 'CIERRE 24 HORAS' ? (
+                            <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
+                          ) : (
+                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                          )
                         ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                           <button
                             type="button"
@@ -2492,7 +2526,11 @@ const App = () => {
                         </td>
                         <td className="px-6 py-4 text-center">
                           {t.isCierre ? (
-                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                            t.cierreTurno === 'CIERRE 24 HORAS' ? (
+                              <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
+                            ) : (
+                              <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                            )
                           ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                             <button
                               type="button"
