@@ -96,12 +96,14 @@ const App = () => {
   const [dosisType, setDosisType] = useState('UNICA'); // UNICA | INFUSION
   const [cierreTurnoValue, setCierreTurnoValue] = useState('SEGUNDO');
   const [crossCheckPharmacistValue, setCrossCheckPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
+  const [openRxPharmacistValue, setOpenRxPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
   const [securityPromptValue, setSecurityPromptValue] = useState('');
   const securityPromptResolverRef = useRef(null);
   const [requestQuantities, setRequestQuantities] = useState({});
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
+  const [pendingOpenRxTransaction, setPendingOpenRxTransaction] = useState(null);
   // Data States moved up
   const [transactions, setTransactions] = useState([
     {
@@ -528,7 +530,7 @@ const App = () => {
     setPendingCount((pendingWritesRef.current || []).length);
   };
 
-  const handleOpenRxUse = (transaction) => {
+  const handleOpenRxUse = (transaction, overridePharmacist) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
     if (nextUsed <= transaction.rxUsed) return;
@@ -539,6 +541,7 @@ const App = () => {
       date: now,
       type: 'OUT',
       rxUsed: nextUsed,
+      pharmacist: toUpper(overridePharmacist || transaction.pharmacist),
     };
     setTransactions([newTransaction, ...transactions]);
     enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
@@ -1544,6 +1547,12 @@ const App = () => {
       const updatedTx = updatedTransactions.find((t) => t.id === editingTransactionId);
       setTransactions(updatedTransactions);
       if (updatedTx) enqueueWrite({ type: 'set', collection: 'transactions', id: updatedTx.id, data: updatedTx });
+    } else if (modalType === 'open-rx-use') {
+      if (!pendingOpenRxTransaction) return;
+      const selectedPharmacist = toUpper(formData.get('openRxPharmacist'));
+      if (!selectedPharmacist) return;
+      handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist);
+      setPendingOpenRxTransaction(null);
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -2269,7 +2278,12 @@ const App = () => {
                         ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                           <button
                             type="button"
-                            onClick={() => handleOpenRxUse(t)}
+                            onClick={() => {
+                              setPendingOpenRxTransaction(t);
+                              setOpenRxPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                              setModalType('open-rx-use');
+                              setShowModal(true);
+                            }}
                             className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
                             title="Registrar nuevo rebajo"
                           >
@@ -2423,7 +2437,12 @@ const App = () => {
                           ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                             <button
                               type="button"
-                              onClick={() => handleOpenRxUse(t)}
+                              onClick={() => {
+                                setPendingOpenRxTransaction(t);
+                                setOpenRxPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                                setModalType('open-rx-use');
+                                setShowModal(true);
+                              }}
                               className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
                               title="Registrar nuevo rebajo"
                             >
@@ -2998,6 +3017,8 @@ const App = () => {
                             ? 'Nuevo Registro de Bitacora'
                             : modalType === 'cierre'
                               ? 'Cierre de Inventario'
+                              : modalType === 'open-rx-use'
+                                ? 'Registrar Rebajo Receta Abierta'
                               : modalType === 'cross-check'
                                 ? 'Control Cruzado de Saldo'
                               : modalType === 'sync-log'
@@ -3218,6 +3239,17 @@ const App = () => {
                     options={pharmacists}
                     defaultValue={crossCheckPharmacistValue}
                     onChange={(e) => setCrossCheckPharmacistValue(e.target.value)}
+                    required
+                  />
+                </>
+              ) : modalType === 'open-rx-use' ? (
+                <>
+                  <SelectLabel
+                    label="Farmaceutico que Realiza Rebajo"
+                    name="openRxPharmacist"
+                    options={pharmacists}
+                    defaultValue={openRxPharmacistValue}
+                    onChange={(e) => setOpenRxPharmacistValue(e.target.value)}
                     required
                   />
                 </>
