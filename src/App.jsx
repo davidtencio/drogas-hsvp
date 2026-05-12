@@ -97,6 +97,7 @@ const App = () => {
   const [cierreTurnoValue, setCierreTurnoValue] = useState('SEGUNDO');
   const [crossCheckPharmacistValue, setCrossCheckPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [openRxPharmacistValue, setOpenRxPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
+  const [openRxAmountValue, setOpenRxAmountValue] = useState('');
   const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
   const [securityPromptValue, setSecurityPromptValue] = useState('');
   const securityPromptResolverRef = useRef(null);
@@ -431,6 +432,20 @@ const App = () => {
     const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
     return Math.min(maxUsed + 1, rxQuantity);
   };
+  const getCurrentOpenRxAmount = (items, transaction) => {
+    const matches = items
+      .filter(
+        (t) =>
+          t.medId === transaction.medId &&
+          t.prescription === transaction.prescription &&
+          t.type === 'OUT' &&
+          t.rxType === 'ABIERTA' &&
+          t.rxQuantity === transaction.rxQuantity,
+      )
+      .sort(compareTransactionsDesc);
+    const latest = matches[0];
+    return Number.isFinite(Number(latest?.amount)) ? Number(latest.amount) : Number(transaction.amount) || 0;
+  };
 
   const parseDateTime = (value) => {
     if (!value) return null;
@@ -530,16 +545,19 @@ const App = () => {
     setPendingCount((pendingWritesRef.current || []).length);
   };
 
-  const handleOpenRxUse = (transaction, overridePharmacist) => {
+  const handleOpenRxUse = (transaction, overridePharmacist, overrideAmount) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
     if (nextUsed <= transaction.rxUsed) return;
+    const amountToUse = parseInt(overrideAmount, 10);
+    if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
     const now = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
     const newTransaction = {
       ...transaction,
       id: Date.now(),
       date: now,
       type: 'OUT',
+      amount: amountToUse,
       rxUsed: nextUsed,
       pharmacist: toUpper(overridePharmacist || transaction.pharmacist),
     };
@@ -1550,9 +1568,12 @@ const App = () => {
     } else if (modalType === 'open-rx-use') {
       if (!pendingOpenRxTransaction) return;
       const selectedPharmacist = toUpper(formData.get('openRxPharmacist'));
+      const selectedAmount = parseInt(formData.get('openRxAmount'), 10);
       if (!selectedPharmacist) return;
-      handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist);
+      if (!Number.isFinite(selectedAmount) || selectedAmount <= 0) return;
+      handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
       setPendingOpenRxTransaction(null);
+      setOpenRxAmountValue('');
     } else if (modalType === 'bitacora') {
       const newEntry = {
         id: Date.now(),
@@ -2281,6 +2302,7 @@ const App = () => {
                             onClick={() => {
                               setPendingOpenRxTransaction(t);
                               setOpenRxPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                              setOpenRxAmountValue(String(getCurrentOpenRxAmount(transactions, t)));
                               setModalType('open-rx-use');
                               setShowModal(true);
                             }}
@@ -2440,6 +2462,7 @@ const App = () => {
                               onClick={() => {
                                 setPendingOpenRxTransaction(t);
                                 setOpenRxPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                                setOpenRxAmountValue(String(getCurrentOpenRxAmount(transactions, t)));
                                 setModalType('open-rx-use');
                                 setShowModal(true);
                               }}
@@ -3244,6 +3267,15 @@ const App = () => {
                 </>
               ) : modalType === 'open-rx-use' ? (
                 <>
+                  <InputLabel
+                    label="Cantidad a Rebajar"
+                    name="openRxAmount"
+                    type="number"
+                    min="1"
+                    value={openRxAmountValue}
+                    onChange={(e) => setOpenRxAmountValue(e.target.value)}
+                    required
+                  />
                   <SelectLabel
                     label="Farmaceutico que Realiza Rebajo"
                     name="openRxPharmacist"
