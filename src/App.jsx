@@ -53,6 +53,7 @@ const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
 const AUTO_MED_NAME_PATTERN = /^MED\s+\d+$/i;
+const INFUSION_DOSE_PATTERN = /INFUSION:\s*([0-9]+(?:\.[0-9]+)?)\s*AMPOLLAS\s*EN\s*([0-9]+(?:\.[0-9]+)?)\s*CC\s*A\s*([0-9]+(?:\.[0-9]+)?)\s*CC\/HR\s*DURACION:\s*([0-9]+(?:\.[0-9]+)?)\s*HRS/i;
 const PRIORITY_MEDICATION_ORDER = [
   'MORFINA 15 MG',
   'DIAZEPAM 10 MG',
@@ -188,6 +189,12 @@ const App = () => {
     const normalized = cleaned.replace(/\./g, '').replace(',', '.');
     const num = parseFloat(normalized);
     return Number.isFinite(num) ? num : 0;
+  };
+  const parseInfusionDose = (dosis) => {
+    const text = (dosis || '').toString();
+    const match = text.match(INFUSION_DOSE_PATTERN);
+    if (!match) return null;
+    return { amps: match[1], vol: match[2], vel: match[3], dur: match[4] };
   };
   const startConfigMedicationEdit = (medication) => {
     setEditingConfigMedId(medication.id);
@@ -1628,11 +1635,17 @@ const App = () => {
       const selectedCondition = toUpper(formData.get('repeatCondicion'));
       const selectedPharmacist = toUpper(formData.get('repeatFarmaceutico'));
       if (!selectedCondition || !selectedPharmacist) return;
+      const baseDosis = pendingRepeatExpediente.dosis || '';
+      const isInfusion = baseDosis.toString().startsWith('INFUSION');
+      const nextDosis = isInfusion
+        ? `INFUSION: ${formData.get('repeat_inf_amps')} AMPOLLAS EN ${formData.get('repeat_inf_vol')} CC A ${formData.get('repeat_inf_vel')} CC/HR DURACION: ${formData.get('repeat_inf_dur')} HRS`
+        : baseDosis;
       const duplicated = {
         ...pendingRepeatExpediente,
         id: Date.now(),
         fecha: now,
         createdAt: Date.now(),
+        dosis: nextDosis,
         condicion: selectedCondition,
         farmaceutico: selectedPharmacist,
       };
@@ -3376,6 +3389,26 @@ const App = () => {
                 </>
               ) : modalType === 'auditoria-repeat' ? (
                 <>
+                  {pendingRepeatExpediente?.dosis?.toString().startsWith('INFUSION') && (
+                    <div className="grid grid-cols-4 gap-2 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Ampollas</label>
+                        <input name="repeat_inf_amps" type="number" step="0.5" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" defaultValue={parseInfusionDose(pendingRepeatExpediente?.dosis)?.amps || ''} required />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Diluyente (cc)</label>
+                        <input name="repeat_inf_vol" type="number" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" defaultValue={parseInfusionDose(pendingRepeatExpediente?.dosis)?.vol || ''} required />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Velocidad (cc/hr)</label>
+                        <input name="repeat_inf_vel" type="number" step="0.1" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" defaultValue={parseInfusionDose(pendingRepeatExpediente?.dosis)?.vel || ''} required />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase">Duracion (hr)</label>
+                        <input name="repeat_inf_dur" type="number" step="0.5" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-600" defaultValue={parseInfusionDose(pendingRepeatExpediente?.dosis)?.dur || ''} required />
+                      </div>
+                    </div>
+                  )}
                   <SelectLabel
                     label="Condicion"
                     name="repeatCondicion"
