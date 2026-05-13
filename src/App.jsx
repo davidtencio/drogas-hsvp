@@ -1410,30 +1410,15 @@ const App = () => {
       .slice()
       .sort(compareTransactionsAsc);
     const map = {};
+    const selectedMedication = medications.find((m) => m.id === selectedMedId);
+    const quota = Number(selectedMedication?.quota) || 0;
     medItems.forEach((t, idx) => {
       if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
-      let previousCloseIdx = -1;
-      for (let i = idx - 1; i >= 0; i -= 1) {
-        const candidate = medItems[i];
-        if (candidate.isCierre && candidate.cierreTurno === 'CIERRE 24 HORAS') {
-          previousCloseIdx = i;
-          break;
-        }
-      }
-      const start = previousCloseIdx + 1;
-      let totalOut = 0;
-      let totalIn = 0;
-      for (let i = start; i <= idx; i += 1) {
-        const tx = medItems[i];
-        if (tx.isCierre) continue;
-        const amount = Number(tx.amount) || 0;
-        if (tx.type === 'OUT') totalOut += amount;
-        else if (tx.type === 'IN') totalIn += amount;
-      }
-      map[t.id] = totalOut - totalIn;
+      const currentStockAtClose = Number(t.totalMedicamento) || 0;
+      map[t.id] = Math.max(0, quota - currentStockAtClose);
     });
     return map;
-  }, [transactions, selectedMedId]);
+  }, [transactions, selectedMedId, medications]);
 
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
@@ -2337,7 +2322,7 @@ const App = () => {
                       <td className="px-6 py-4 text-center">
                         {t.isCierre ? (
                           <span className="font-bold uppercase text-amber-700">
-                            {(t.cierreTurno === 'SEGUNDO' || t.cierreTurno === 'TERCERO') ? 'INVENTARIO' : 'CIERRE'}
+                            {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
                           </span>
                         ) : (
                           <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -2501,7 +2486,7 @@ const App = () => {
                         <td className="px-6 py-4 text-center">
                           {t.isCierre ? (
                             <span className="font-bold uppercase text-amber-700">
-                              {(t.cierreTurno === 'SEGUNDO' || t.cierreTurno === 'TERCERO') ? 'INVENTARIO' : 'CIERRE'}
+                              {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
                             </span>
                           ) : (
                             <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
