@@ -1003,13 +1003,26 @@ const App = () => {
       return;
     }
 
-    const itemsToRequest = requestInventory
+    const priorityMedicationNames = PRIORITY_MEDICATION_ORDER.slice(0, 8);
+    const medByName = new Map(requestInventory.map((med) => [toUpper(med.name), med]));
+    const prioritizedItems = priorityMedicationNames
+      .map((name) => medByName.get(toUpper(name)))
+      .filter(Boolean)
+      .map((med) => ({
+        name: med.name,
+        stock: med.stock,
+        qty: requestQuantities[med.id] || 0,
+      }));
+    const selectedItems = requestInventory
       .filter((med) => selectedRequestMeds[med.id] && (requestQuantities[med.id] || 0) > 0)
       .map((med) => ({
         name: med.name,
         stock: med.stock,
         qty: requestQuantities[med.id],
       }));
+    const seenNames = new Set(prioritizedItems.map((item) => toUpper(item.name)));
+    const extraItems = selectedItems.filter((item) => !seenNames.has(toUpper(item.name)));
+    const itemsToRequest = [...prioritizedItems, ...extraItems];
 
     if (itemsToRequest.length === 0) {
       alert('Por favor seleccione al menos un medicamento e ingrese una cantidad mayor a 0.');
@@ -1047,7 +1060,7 @@ const App = () => {
       head: [['Medicamento', 'Cantidad Actual', 'Cantidad Solicitada']],
       body: itemsToRequest.map((item) => [item.name, item.stock, item.qty]),
       theme: 'grid',
-      headStyles: { fillColor: [22, 163, 74] }, // Emerald-600 like
+      headStyles: { fillColor: [22, 163, 74], halign: 'center', valign: 'middle' }, // Emerald-600 like
       styles: { fontSize: 10, cellPadding: 3 },
       columnStyles: {
         1: { halign: 'center' },
