@@ -163,6 +163,7 @@ const App = () => {
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
+  const persistTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
   const kardexSearchRef = useRef(null);
   const restoreInputRef = useRef(null);
@@ -1197,7 +1198,10 @@ const App = () => {
       selectedMedId,
       maxRecords: maxRecordsLimit,
     };
-    safeSetLocalStorage('pharmaControlData', JSON.stringify(localPayload));
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+    persistTimeoutRef.current = setTimeout(() => {
+      safeSetLocalStorage('pharmaControlData', JSON.stringify(localPayload));
+    }, 700);
     if (!cloudReady || !authUser) return;
     if (pendingWritesRef.current.length > 0 || isFlushingRef.current) return;
     const cloudPayload = {
@@ -1230,6 +1234,10 @@ const App = () => {
       })
       .finally(() => setDocSyncInFlight(false));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId, maxRecordsLimit]);
+
+  useEffect(() => () => {
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+  }, []);
 
   useEffect(() => {
     if (!authUser) return;
