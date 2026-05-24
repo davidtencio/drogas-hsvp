@@ -1051,6 +1051,33 @@ const App = () => {
     return () => observer.disconnect();
   }, [activeTab, authUser, cloudReady, collectionLoadState]);
 
+  useEffect(() => {
+    if (!authUser || !cloudReady) return;
+    const map = {
+      kardex: { name: 'transactions', setter: setTransactions },
+      auditoria: { name: 'expedientes', setter: setExpedientes },
+      bitacora: { name: 'bitacora', setter: setBitacora },
+    };
+    const config = map[activeTab];
+    if (!config) return;
+    const handleScroll = () => {
+      const status = collectionLoadState[config.name];
+      if (!status?.hasMore || status?.loading) return;
+      const viewportBottom = window.scrollY + window.innerHeight;
+      const pageBottom = document.documentElement.scrollHeight;
+      if (pageBottom - viewportBottom < 260) {
+        loadMoreCollection(config.name, config.setter);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll);
+    handleScroll();
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, [activeTab, authUser, cloudReady, collectionLoadState]);
+
   const handleRequestChange = (medId, value) => {
     const num = parseInt(value, 10);
     setRequestQuantities((prev) => ({
