@@ -47,6 +47,7 @@ const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 
 const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
 const INITIAL_CLOUD_LOAD = 200;
 const LOAD_MORE_BATCH_SIZE = 200;
+const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
 const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
@@ -1006,7 +1007,16 @@ const App = () => {
       setter((prev) => {
         const seen = new Set(prev.map((item) => String(item.id)));
         const merged = [...prev, ...batchItems.filter((item) => !seen.has(String(item.id)))];
-        return merged.slice(0, maxRecordsLimit);
+        const softCap = Math.max(maxRecordsLimit, maxRecordsLimit * SOFT_MEMORY_CAP_MULTIPLIER);
+        if (merged.length <= softCap) return merged;
+        return merged
+          .slice()
+          .sort((a, b) => {
+            const aTime = a.createdAt ?? parseDateTime(a.date || a.fecha)?.getTime() ?? 0;
+            const bTime = b.createdAt ?? parseDateTime(b.date || b.fecha)?.getTime() ?? 0;
+            return bTime - aTime;
+          })
+          .slice(0, softCap);
       });
       const reachedEnd = snap.docs.length < LOAD_MORE_BATCH_SIZE;
       setCollectionLoadState((prev) => ({
