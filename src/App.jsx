@@ -1482,12 +1482,13 @@ const App = () => {
     };
     const medTransactions = transactions.filter((t) => t.medId === selectedMedId && matchesSearch(t));
     const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
     cutoff.setDate(cutoff.getDate() - 7);
     const recent = [];
     const historic = [];
     medTransactions.forEach((t) => {
-      const when = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
-      if (when && when >= cutoff) {
+      const whenTs = getTransactionTimestamp(t);
+      if (whenTs >= cutoff.getTime()) {
         recent.push(t);
       } else {
         historic.push(t);
