@@ -89,6 +89,7 @@ const App = () => {
   const [cloudLoading, setCloudLoading] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
+  const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [showHistoric, setShowHistoric] = useState(false);
   const [kardexSearch, setKardexSearch] = useState('');
@@ -624,12 +625,14 @@ const App = () => {
           } else if (action.type === 'delete') {
             await deleteDoc(doc(db, dataDocPath, action.collection, String(action.id)));
           }
-        } catch {
+        } catch (error) {
           remaining.push(action);
           errors.push({
             id: action.id,
             collection: action.collection,
             type: action.type,
+            code: error?.code || 'unknown',
+            message: error?.message || 'No error message',
             time: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
           });
         }
@@ -1196,16 +1199,50 @@ const App = () => {
     };
     safeSetLocalStorage('pharmaControlData', JSON.stringify(localPayload));
     if (!cloudReady || !authUser) return;
+    if (pendingWritesRef.current.length > 0 || isFlushingRef.current) return;
     const cloudPayload = {
       medications,
       selectedMedId,
       maxRecords: maxRecordsLimit,
     };
+    setDocSyncInFlight(true);
     setCloudStatus('Sincronizando...');
     setDoc(doc(db, dataDocPath), cloudPayload, { merge: true })
-      .then(() => setCloudStatus('Sincronizado'))
-      .catch(() => setCloudStatus('Sin conexion'));
+      .then(() => {
+        if ((pendingWritesRef.current || []).length === 0 && !isFlushingRef.current && !syncError) {
+          setCloudStatus('Sincronizado');
+        }
+      })
+      .catch((error) => {
+        setCloudStatus('Sin conexion');
+        setSyncError('No se pudo sincronizar configuracion general.');
+        setSyncErrors((prev) => [
+          {
+            id: 'root-doc',
+            collection: dataDocPath,
+            type: 'set',
+            code: error?.code || 'unknown',
+            message: error?.message || 'No error message',
+            time: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+          },
+          ...prev,
+        ].slice(0, 50));
+      })
+      .finally(() => setDocSyncInFlight(false));
   }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId, maxRecordsLimit]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (syncError) {
+      setCloudStatus('Sin conexion');
+      return;
+    }
+    if ((pendingWritesRef.current || []).length > 0 || isFlushingRef.current || docSyncInFlight || cloudLoading) {
+      setCloudStatus('Sincronizando...');
+      return;
+    }
+    setCloudStatus('Sincronizado');
+  }, [authUser, syncError, pendingCount, docSyncInFlight, cloudLoading]);
 
   const handleRollover = async () => {
     if (!window.confirm('Se ha alcanzado el limite de seguridad de registros. El sistema debe realizar un cierre de periodo automatico.\n\nEsto descargara un respaldo, limpiara el historial y mantendra los saldos actuales.\n\n¿Desea proceder?')) {
