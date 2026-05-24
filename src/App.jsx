@@ -26,8 +26,6 @@ import {
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -47,6 +45,8 @@ const PAGE_SIZE = 25;
 const CR_TIMEZONE = 'America/Costa_Rica';
 const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 10);
 const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
+const INITIAL_CLOUD_LOAD = 200;
+const LOAD_MORE_BATCH_SIZE = 200;
 const MAX_PENDING_WRITES = 200;
 const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
@@ -153,13 +153,27 @@ const App = () => {
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [cloudReady, setCloudReady] = useState(false);
+  const [collectionLoadState, setCollectionLoadState] = useState({
+    transactions: { loading: false, hasMore: true },
+    expedientes: { loading: false, hasMore: true },
+    bitacora: { loading: false, hasMore: true },
+  });
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
-  const createdAtBackfillRef = useRef({});
   const kardexSearchRef = useRef(null);
   const restoreInputRef = useRef(null);
+  const lastDocRefs = useRef({
+    transactions: null,
+    expedientes: null,
+    bitacora: null,
+  });
+  const infiniteSentinelRefs = useRef({
+    transactions: null,
+    expedientes: null,
+    bitacora: null,
+  });
   const [auditoriaSearch, setAuditoriaSearch] = useState('');
   const ORG_ID = 'hsvp';
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
@@ -558,7 +572,8 @@ const App = () => {
     }
   };
   const persistPendingWrites = (items) => {
-    const capped = items.slice(0, MAX_PENDING_WRITES);
+    // Keep the newest actions so recent deletes/edits are not dropped.
+    const capped = items.slice(-MAX_PENDING_WRITES);
     setQueueOverflow(items.length > MAX_PENDING_WRITES);
     pendingWritesRef.current = capped;
     safeSetLocalStorage('pharmaPendingWrites', JSON.stringify(capped));
@@ -835,45 +850,14 @@ const App = () => {
           return false;
         };
 
-        const loadCollection = async (name, setter, dateField) => {
+        const loadCollection = async (name, setter) => {
           const colRef = collection(db, dataDocPath, name);
-          if (!createdAtBackfillRef.current[name]) {
-            createdAtBackfillRef.current[name] = true;
-            let last = null;
-            while (true) {
-              const pageQuery = last
-                ? query(colRef, orderBy('__name__'), startAfter(last), limit(500))
-                : query(colRef, orderBy('__name__'), limit(500));
-              const backfillSnap = await getDocs(pageQuery);
-              if (backfillSnap.empty) break;
-              let batch = writeBatch(db);
-              let batchCount = 0;
-              backfillSnap.docs.forEach((docSnap) => {
-                const data = docSnap.data();
-                if (data.createdAt) return;
-                const source = data[dateField];
-                const createdAt = parseDateTime(source)?.getTime() ?? Date.now();
-                batch.set(docSnap.ref, { createdAt, updatedAt: Date.now() }, { merge: true });
-                batchCount += 1;
-                if (batchCount >= 450) {
-                  batch.commit();
-                  batch = writeBatch(db);
-                  batchCount = 0;
-                }
-              });
-              if (batchCount > 0) {
-                await batch.commit();
-              }
-              last = backfillSnap.docs[backfillSnap.docs.length - 1];
-              if (backfillSnap.docs.length < 500) break;
-              await delay(50);
-            }
-          }
+          const initialLoadLimit = Math.max(25, Math.min(maxRecordsLimit, INITIAL_CLOUD_LOAD));
           const items = [];
           let lastDoc = null;
           let usedFallback = false;
           let hadError = false;
-          while (items.length < maxRecordsLimit) {
+          while (items.length < initialLoadLimit) {
             try {
               const q = lastDoc
                 ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
@@ -902,13 +886,18 @@ const App = () => {
               }
             }
           }
-          setter(items.slice(0, maxRecordsLimit));
+          lastDocRefs.current[name] = lastDoc;
+          setCollectionLoadState((prev) => ({
+            ...prev,
+            [name]: { ...prev[name], hasMore: items.length >= initialLoadLimit },
+          }));
+          setter(items.slice(0, initialLoadLimit));
           return { items, usedFallback, hadError };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
-          loadCollection('transactions', setTransactions, 'date'),
-          loadCollection('expedientes', setExpedientes, 'fecha'),
-          loadCollection('bitacora', setBitacora, 'fecha'),
+          loadCollection('transactions', setTransactions),
+          loadCollection('expedientes', setExpedientes),
+          loadCollection('bitacora', setBitacora),
         ]);
         const [servicesMigrated, pharmacistsMigrated, condicionesMigrated] = await Promise.all([
           loadCatalogCollection('catalog_services', setServices, legacyServices),
@@ -989,6 +978,69 @@ const App = () => {
     };
   }, [authUser]);
 
+  const loadMoreCollection = async (name, setter) => {
+    if (!authUser || !cloudReady) return;
+    if (collectionLoadState[name]?.loading || !collectionLoadState[name]?.hasMore) return;
+    setCollectionLoadState((prev) => ({ ...prev, [name]: { ...prev[name], loading: true } }));
+    try {
+      const colRef = collection(db, dataDocPath, name);
+      const lastDoc = lastDocRefs.current[name];
+      let snap = null;
+      try {
+        const q = lastDoc
+          ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(LOAD_MORE_BATCH_SIZE))
+          : query(colRef, orderBy('createdAt', 'desc'), limit(LOAD_MORE_BATCH_SIZE));
+        snap = await getDocs(q);
+      } catch {
+        const fallbackQuery = lastDoc
+          ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(LOAD_MORE_BATCH_SIZE))
+          : query(colRef, orderBy('__name__'), limit(LOAD_MORE_BATCH_SIZE));
+        snap = await getDocs(fallbackQuery);
+      }
+      if (!snap || snap.empty) {
+        setCollectionLoadState((prev) => ({ ...prev, [name]: { loading: false, hasMore: false } }));
+        return;
+      }
+      const batchItems = snap.docs.map((d) => d.data());
+      lastDocRefs.current[name] = snap.docs[snap.docs.length - 1];
+      setter((prev) => {
+        const seen = new Set(prev.map((item) => String(item.id)));
+        const merged = [...prev, ...batchItems.filter((item) => !seen.has(String(item.id)))];
+        return merged.slice(0, maxRecordsLimit);
+      });
+      const reachedEnd = snap.docs.length < LOAD_MORE_BATCH_SIZE;
+      setCollectionLoadState((prev) => ({
+        ...prev,
+        [name]: { loading: false, hasMore: !reachedEnd },
+      }));
+    } catch {
+      setCollectionLoadState((prev) => ({ ...prev, [name]: { ...prev[name], loading: false } }));
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser || !cloudReady) return;
+    const map = {
+      kardex: { name: 'transactions', setter: setTransactions },
+      auditoria: { name: 'expedientes', setter: setExpedientes },
+      bitacora: { name: 'bitacora', setter: setBitacora },
+    };
+    const config = map[activeTab];
+    if (!config) return;
+    const target = infiniteSentinelRefs.current[config.name];
+    if (!target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (!entry?.isIntersecting) return;
+        loadMoreCollection(config.name, config.setter);
+      },
+      { root: null, rootMargin: '200px 0px', threshold: 0.1 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [activeTab, authUser, cloudReady, collectionLoadState]);
+
   const handleRequestChange = (medId, value) => {
     const num = parseInt(value, 10);
     setRequestQuantities((prev) => ({
@@ -1004,7 +1056,7 @@ const App = () => {
     }));
   };
 
-  const generateRequestPDF = () => {
+  const generateRequestPDF = async () => {
     if (!requestPharmacist) {
       alert('Por favor seleccione el farmaceutico que elabora la solicitud.');
       return;
@@ -1036,6 +1088,10 @@ const App = () => {
       return;
     }
 
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
     const doc = new jsPDF();
     const now = new Date().toLocaleString('es-CR', {
       year: 'numeric',
@@ -2478,6 +2534,19 @@ const App = () => {
                 onPrev={() => setKardexRecentPage((prev) => Math.max(prev - 1, 1))}
                 onNext={() => setKardexRecentPage((prev) => Math.min(prev + 1, recentPage.totalPages))}
               />
+              {collectionLoadState.transactions.hasMore && (
+                <div className="px-6 pb-4">
+                  <div ref={(el) => { infiniteSentinelRefs.current.transactions = el; }} className="h-1" />
+                  <button
+                    type="button"
+                    onClick={() => loadMoreCollection('transactions', setTransactions)}
+                    disabled={collectionLoadState.transactions.loading}
+                    className="w-full bg-white border border-slate-200 text-slate-700 py-2 rounded-md text-[11px] font-bold uppercase tracking-wider hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {collectionLoadState.transactions.loading ? 'Cargando...' : 'Cargar mas movimientos'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -2490,6 +2559,11 @@ const App = () => {
                 >
                   {showHistoric ? 'Ocultar' : 'Mostrar'}
                 </button>
+              </div>
+              <div className="px-6 py-2 border-b border-slate-100 bg-white">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Mostrando {transactions.length} movimientos cargados
+                </p>
               </div>
               {showHistoric && (
                 <table className="w-full text-left text-sm border-collapse">
@@ -2658,6 +2732,11 @@ const App = () => {
                 />
               </div>
             </div>
+            <div className="px-6 py-2 border-b border-slate-100 bg-white">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Mostrando {expedientes.length} revisiones cargadas
+              </p>
+            </div>
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -2771,11 +2850,29 @@ const App = () => {
               onPrev={() => setAuditoriaPage((prev) => Math.max(prev - 1, 1))}
               onNext={() => setAuditoriaPage((prev) => Math.min(prev + 1, auditoriaPageData.totalPages))}
             />
+            {collectionLoadState.expedientes.hasMore && (
+              <div className="px-6 pb-4">
+                <div ref={(el) => { infiniteSentinelRefs.current.expedientes = el; }} className="h-1" />
+                <button
+                  type="button"
+                  onClick={() => loadMoreCollection('expedientes', setExpedientes)}
+                  disabled={collectionLoadState.expedientes.loading}
+                  className="w-full bg-white border border-slate-200 text-slate-700 py-2 rounded-md text-[11px] font-bold uppercase tracking-wider hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {collectionLoadState.expedientes.loading ? 'Cargando...' : 'Cargar mas revisiones'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'bitacora' && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-2 border-b border-slate-100 bg-white">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Mostrando {bitacora.length} registros cargados
+              </p>
+            </div>
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -2812,6 +2909,19 @@ const App = () => {
               onPrev={() => setBitacoraPage((prev) => Math.max(prev - 1, 1))}
               onNext={() => setBitacoraPage((prev) => Math.min(prev + 1, bitacoraPageData.totalPages))}
             />
+            {collectionLoadState.bitacora.hasMore && (
+              <div className="px-6 pb-4">
+                <div ref={(el) => { infiniteSentinelRefs.current.bitacora = el; }} className="h-1" />
+                <button
+                  type="button"
+                  onClick={() => loadMoreCollection('bitacora', setBitacora)}
+                  disabled={collectionLoadState.bitacora.loading}
+                  className="w-full bg-white border border-slate-200 text-slate-700 py-2 rounded-md text-[11px] font-bold uppercase tracking-wider hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {collectionLoadState.bitacora.loading ? 'Cargando...' : 'Cargar mas bitacora'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
