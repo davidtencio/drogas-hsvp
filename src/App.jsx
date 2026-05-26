@@ -1587,6 +1587,25 @@ const App = () => {
     });
     return map;
   }, [transactions, selectedMedId, medications]);
+  const getLiveBalanceForMedication = (medId) => {
+    const medItems = transactions
+      .filter((t) => t.medId === medId)
+      .slice()
+      .sort(compareTransactionsAsc);
+    let running = 0;
+    medItems.forEach((t) => {
+      if (
+        t.isCierre &&
+        (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO')
+      ) {
+        running = Number(t.totalMedicamento) || 0;
+      } else if (!t.isCierre) {
+        const amount = Number(t.amount) || 0;
+        running += t.type === 'IN' ? amount : -amount;
+      }
+    });
+    return running;
+  };
 
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
@@ -1732,7 +1751,10 @@ const App = () => {
       }
     } else if (modalType === 'cierre') {
       const cierreTurno = toUpper(formData.get('turno'));
-      const computedTotalMedicamento = Number(selectedCurrentStock) || 0;
+      const computedTotalMedicamento =
+        cierreTurno === 'CIERRE 24 HORAS'
+          ? Number(selectedCurrentStock) || 0
+          : getLiveBalanceForMedication(selectedMedId);
       const newCierre = {
         id: Date.now(),
         date: now,
