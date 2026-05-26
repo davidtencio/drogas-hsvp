@@ -1695,6 +1695,22 @@ const App = () => {
       blockedCount: (counters.blocked_by_quota || 0) + (counters.enqueue_blocked || 0),
     };
   }, [syncEvents]);
+  const releaseGateChecks = useMemo(() => {
+    const hasPending = pendingCount > 0;
+    const hasSyncError = Boolean(syncError);
+    const hasQueueRisk = queueOverflow || writeBlockedByStorage;
+    const hasRecentRestore = restoreAuditLog.length > 0;
+    const checks = [
+      { key: 'no_pending', label: 'Sin pendientes de sincronizacion', ok: !hasPending },
+      { key: 'no_sync_error', label: 'Sin errores activos de sincronizacion', ok: !hasSyncError },
+      { key: 'no_queue_risk', label: 'Sin riesgo de cola local', ok: !hasQueueRisk },
+      { key: 'backup_or_restore', label: 'Respaldo/restauracion verificada en sesion', ok: hasRecentRestore },
+    ];
+    return {
+      checks,
+      approved: checks.every((c) => c.ok),
+    };
+  }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, restoreAuditLog]);
   const getLiveBalanceForMedication = (medId) => {
     const medItems = transactions
       .filter((t) => t.medId === medId)
@@ -3350,6 +3366,30 @@ const App = () => {
                     </div>
                   ))}
                   {restoreAuditLog.length === 0 && <p className="text-[10px] text-slate-400">Sin restauraciones registradas en esta sesion.</p>}
+                </div>
+              </div>
+              <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-bold uppercase text-slate-500">Gate de Release (Fase 5)</p>
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md border ${
+                      releaseGateChecks.approved
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                    }`}
+                  >
+                    {releaseGateChecks.approved ? 'Aprobado' : 'Bloqueado'}
+                  </span>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {releaseGateChecks.checks.map((check) => (
+                    <div key={check.key} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1">
+                      <span className="text-[10px] font-semibold text-slate-700">{check.label}</span>
+                      <span className={`text-[10px] font-bold ${check.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {check.ok ? 'OK' : 'FALLA'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="mt-4">
