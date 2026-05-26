@@ -527,13 +527,14 @@ const App = () => {
     return `${used} de ${t.rxQuantity}`;
   };
 
-  const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
+  const nextOpenRxUse = (items, medId, prescription, rxQuantity, amountToAdd = 1) => {
     const matches = items.filter(
       (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
     );
-    if (matches.length === 0) return 1;
+    const safeAmount = Math.max(0, Number(amountToAdd) || 0);
+    if (matches.length === 0) return Math.min(safeAmount, rxQuantity);
     const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
-    return Math.min(maxUsed + 1, rxQuantity);
+    return Math.min(maxUsed + safeAmount, rxQuantity);
   };
   const getCurrentOpenRxAmount = (items, transaction) => {
     const matches = items
@@ -653,10 +654,16 @@ const App = () => {
 
   const handleOpenRxUse = (transaction, overridePharmacist, overrideAmount) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
-    const nextUsed = nextOpenRxUse(transactions, transaction.medId, transaction.prescription, transaction.rxQuantity);
-    if (nextUsed <= transaction.rxUsed) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
+    const nextUsed = nextOpenRxUse(
+      transactions,
+      transaction.medId,
+      transaction.prescription,
+      transaction.rxQuantity,
+      amountToUse,
+    );
+    if (nextUsed <= transaction.rxUsed) return;
     const now = new Date().toLocaleString('es-CR', {
       year: 'numeric',
       month: 'numeric',
@@ -1852,17 +1859,18 @@ const App = () => {
     if (modalType === 'kardex') {
       const rxType = isQuickIngreso ? 'CERRADA' : formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
+      const amount = parseInt(formData.get('amount'), 10) || 0;
       const medId = formData.get('medicationId');
       const prescription = isQuickIngreso ? '' : toUpper(formData.get('prescription'));
       const rxUsed =
-        rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity) : 0;
+        rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity, amount) : 0;
       const newTransaction = {
         id: Date.now(),
         date: now,
         createdAt: Date.now(),
         medId,
         type: isQuickIngreso ? 'IN' : 'OUT',
-        amount: parseInt(formData.get('amount'), 10),
+        amount,
         service: isQuickIngreso ? 'INGRESO A INVENTARIO' : toUpper(formData.get('service')),
         cama: isQuickIngreso ? '' : toUpper(formData.get('cama')),
         prescription,
@@ -1878,21 +1886,23 @@ const App = () => {
       const current = transactions.find((t) => t.id === editingTransactionId);
       const rxType = formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
+      const amount = parseInt(formData.get('amount'), 10) || 0;
       const medId = formData.get('medicationId');
       const prescription = toUpper(formData.get('prescription'));
       const rxUsed =
         rxType !== 'ABIERTA'
           ? 0
           : current?.rxType === 'ABIERTA'
-            ? Math.min(current?.rxUsed ?? 0, rxQuantity)
+            ? Math.min(Math.max(Number(current?.rxUsed) || 0, amount), rxQuantity)
             : Math.max(
-                1,
+                amount || 1,
                 Math.min(
                   nextOpenRxUse(
                     transactions.filter((t) => t.id !== editingTransactionId),
                     medId,
                     prescription,
                     rxQuantity,
+                    amount,
                   ),
                   rxQuantity || 1,
                 ),
@@ -1903,7 +1913,7 @@ const App = () => {
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId,
         type: current?.type === 'IN' ? 'IN' : 'OUT',
-        amount: parseInt(formData.get('amount'), 10),
+        amount,
         service: toUpper(formData.get('service')),
         cama: toUpper(formData.get('cama')),
         prescription,
@@ -2136,6 +2146,7 @@ const App = () => {
     } else if (modalType === 'reintegro') {
       const rxQuantity = 0;
       const rxType = 'CERRADA';
+      const amount = parseInt(formData.get('amount'), 10) || 0;
       const medId = formData.get('medicationId');
       const receta = toUpper(formData.get('receta'));
       const motivo = toUpper(formData.get('motivo'));
@@ -2146,7 +2157,7 @@ const App = () => {
         createdAt: Date.now(),
         medId,
         type: 'IN',
-        amount: parseInt(formData.get('amount'), 10),
+        amount,
         service: 'REINTEGRO',
         cama: '',
         prescription, // Storing combined Receta + Motivo
@@ -4495,5 +4506,6 @@ const Pagination = ({ page, totalPages, onPrev, onNext }) => (
 );
 
 export default App;
+
 
 
