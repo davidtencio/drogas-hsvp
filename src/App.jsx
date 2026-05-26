@@ -1357,7 +1357,7 @@ const App = () => {
         ].slice(0, 50));
       })
       .finally(() => setDocSyncInFlight(false));
-  }, [transactions, expedientes, bitacora, medications, services, pharmacists, condiciones, selectedMedId, maxRecordsLimit]);
+  }, [medications, selectedMedId, maxRecordsLimit, cloudReady, authUser, syncError]);
 
   useEffect(() => () => {
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
