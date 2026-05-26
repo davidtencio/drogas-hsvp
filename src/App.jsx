@@ -1691,17 +1691,35 @@ const App = () => {
       const current = transactions.find((t) => t.id === editingTransactionId);
       const rxType = formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
-      const rxUsed = rxType === 'ABIERTA' ? Math.min(current?.rxUsed ?? 0, rxQuantity) : 0;
+      const medId = formData.get('medicationId');
+      const prescription = toUpper(formData.get('prescription'));
+      const rxUsed =
+        rxType !== 'ABIERTA'
+          ? 0
+          : current?.rxType === 'ABIERTA'
+            ? Math.min(current?.rxUsed ?? 0, rxQuantity)
+            : Math.max(
+                1,
+                Math.min(
+                  nextOpenRxUse(
+                    transactions.filter((t) => t.id !== editingTransactionId),
+                    medId,
+                    prescription,
+                    rxQuantity,
+                  ),
+                  rxQuantity || 1,
+                ),
+              );
       const updated = {
         id: editingTransactionId,
         date: now,
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
-        medId: formData.get('medicationId'),
+        medId,
         type: current?.type === 'IN' ? 'IN' : 'OUT',
         amount: parseInt(formData.get('amount'), 10),
         service: toUpper(formData.get('service')),
         cama: toUpper(formData.get('cama')),
-        prescription: toUpper(formData.get('prescription')),
+        prescription,
         dosis: toUpper(formData.get('dosis')),
         rxType,
         rxQuantity,
