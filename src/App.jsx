@@ -18,7 +18,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -94,6 +94,7 @@ const App = () => {
   const [syncEvents, setSyncEvents] = useState([]);
   const [restoreAuditLog, setRestoreAuditLog] = useState([]);
   const [backupAuditLog, setBackupAuditLog] = useState([]);
+  const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
@@ -859,6 +860,20 @@ const App = () => {
       flushWriteQueue();
     }
   }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser || !cloudReady) return;
+    const loadTotalTransactionsCount = async () => {
+      try {
+        const colRef = collection(db, dataDocPath, 'transactions');
+        const snap = await getCountFromServer(colRef);
+        setTotalTransactionsCount(Number(snap.data()?.count || 0));
+      } catch {
+        setTotalTransactionsCount((prev) => (prev > 0 ? prev : transactions.length));
+      }
+    };
+    loadTotalTransactionsCount();
+  }, [authUser, cloudReady, dataDocPath, pendingCount, transactions.length]);
 
   useEffect(() => {
     if (!showModal) {
@@ -1782,10 +1797,10 @@ const App = () => {
   }, [medications, configMedSearch]);
   const recordsUsage = useMemo(() => {
     const limit = Math.max(1, maxRecordsLimit);
-    const used = transactions.length;
+    const used = Math.max(totalTransactionsCount || 0, transactions.length);
     const pct = Math.min(100, Math.round((used / limit) * 100));
     return { used, limit, pct };
-  }, [transactions.length, maxRecordsLimit]);
+  }, [transactions.length, totalTransactionsCount, maxRecordsLimit]);
   const selectedCurrentStock = useMemo(
     () => currentInventory.find((m) => m.id === selectedMedId)?.stock ?? 0,
     [currentInventory, selectedMedId],
