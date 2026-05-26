@@ -115,7 +115,10 @@ const App = () => {
   const [repeatPharmacistValue, setRepeatPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [securityPromptOpen, setSecurityPromptOpen] = useState(false);
   const [securityPromptValue, setSecurityPromptValue] = useState('');
+  const [confirmPromptOpen, setConfirmPromptOpen] = useState(false);
+  const [confirmPromptMessage, setConfirmPromptMessage] = useState('');
   const securityPromptResolverRef = useRef(null);
+  const confirmPromptResolverRef = useRef(null);
   const [requestQuantities, setRequestQuantities] = useState({});
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
@@ -302,6 +305,19 @@ const App = () => {
     setSecurityPromptOpen(false);
     setSecurityPromptValue('');
     if (resolver) resolver(ok);
+  };
+  const requestStyledConfirm = (message) =>
+    new Promise((resolve) => {
+      confirmPromptResolverRef.current = resolve;
+      setConfirmPromptMessage(message || 'Confirme para continuar.');
+      setConfirmPromptOpen(true);
+    });
+  const resolveStyledConfirm = (accepted) => {
+    const resolver = confirmPromptResolverRef.current;
+    confirmPromptResolverRef.current = null;
+    setConfirmPromptOpen(false);
+    setConfirmPromptMessage('');
+    if (resolver) resolver(Boolean(accepted));
   };
   const downloadDatabaseBackup = () => {
     const payload = {
@@ -2619,10 +2635,11 @@ const App = () => {
                           </button>
                           <button
                             onClick={() => {
-                              const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
-                              if (!confirmDelete) return;
-                              setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                              enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                              requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
+                                if (!confirmDelete) return;
+                                setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                              });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
@@ -2796,10 +2813,11 @@ const App = () => {
                             </button>
                             <button
                               onClick={() => {
-                                const confirmDelete = window.confirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`);
-                                if (!confirmDelete) return;
-                                setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
+                                  if (!confirmDelete) return;
+                                  setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                  enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                });
                               }}
                               className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                             >
@@ -3335,6 +3353,34 @@ const App = () => {
                   type="button"
                   onClick={() => resolveSecurityPrompt(true)}
                   className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-700"
+                >
+                  Aceptar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmPromptOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Confirmar Accion</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-slate-700">{confirmPromptMessage}</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => resolveStyledConfirm(false)}
+                  className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveStyledConfirm(true)}
+                  className="bg-rose-600 text-white px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-rose-700"
                 >
                   Aceptar
                 </button>
