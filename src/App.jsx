@@ -523,7 +523,23 @@ const App = () => {
 
   const getRxProgress = (t) => {
     if (t.rxType !== 'ABIERTA') return '';
-    const used = Number(t.rxUsed) || 0;
+    const matches = transactions
+      .filter(
+        (x) =>
+          x.medId === t.medId &&
+          x.prescription === t.prescription &&
+          x.type === 'OUT' &&
+          x.rxType === 'ABIERTA' &&
+          x.rxQuantity === t.rxQuantity,
+      )
+      .slice()
+      .sort(compareTransactionsAsc);
+    let used = 0;
+    for (const item of matches) {
+      used += Number(item.amount) || 0;
+      if (item.id === t.id) break;
+    }
+    used = Math.min(used, Number(t.rxQuantity) || 0);
     return `${used} de ${t.rxQuantity}`;
   };
 
