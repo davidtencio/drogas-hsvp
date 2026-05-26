@@ -2123,8 +2123,15 @@ const App = () => {
   };
 
   const getTransactionLabel = (t) => {
+    const formatShiftLabel = (value) => {
+      const v = toUpper(value);
+      if (v === 'PRIMER' || v === 'PRIMER TURNO') return 'PRIMER TURNO';
+      if (v === 'SEGUNDO' || v === 'SEGUNDO TURNO') return 'SEGUNDO TURNO';
+      if (v === 'TERCERO' || v === 'TERCER TURNO') return 'TERCER TURNO';
+      return value || '';
+    };
     if (t.isCierre) {
-      return `CIERRE ${t.cierreTurno || ''} - ${t.date}`;
+      return `CIERRE ${formatShiftLabel(t.cierreTurno)} - ${t.date}`;
     }
     const medName = medications.find((m) => m.id === t.medId)?.name || t.medId;
     const tipo = t.type === 'IN' ? 'INGRESO' : 'SALIDA';
@@ -2744,7 +2751,13 @@ const App = () => {
                       </td>
                       <td className="px-6 py-4 font-medium text-slate-700 text-center">
                         {t.isCierre ? (
-                          <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                          <span className="font-bold text-slate-700">{(() => {
+                            const v = toUpper(t.cierreTurno);
+                            if (v === 'PRIMER' || v === 'PRIMER TURNO') return 'PRIMER TURNO';
+                            if (v === 'SEGUNDO' || v === 'SEGUNDO TURNO') return 'SEGUNDO TURNO';
+                            if (v === 'TERCERO' || v === 'TERCER TURNO') return 'TERCER TURNO';
+                            return t.cierreTurno;
+                          })()}</span>
                         ) : (
                           <>
                             {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
@@ -2934,7 +2947,13 @@ const App = () => {
                         </td>
                         <td className="px-6 py-4 font-medium text-slate-700 text-center">
                           {t.isCierre ? (
-                            <span className="font-bold text-slate-700">{t.cierreTurno}</span>
+                            <span className="font-bold text-slate-700">{(() => {
+                              const v = toUpper(t.cierreTurno);
+                              if (v === 'PRIMER' || v === 'PRIMER TURNO') return 'PRIMER TURNO';
+                              if (v === 'SEGUNDO' || v === 'SEGUNDO TURNO') return 'SEGUNDO TURNO';
+                              if (v === 'TERCERO' || v === 'TERCER TURNO') return 'TERCER TURNO';
+                              return t.cierreTurno;
+                            })()}</span>
                           ) : (
                             <>
                               {t.service} {t.cama && <span className="text-slate-400 font-normal">/ {t.cama}</span>}
@@ -3853,7 +3872,7 @@ const App = () => {
                   <SelectLabel
                     label="Turno"
                     name="turno"
-                    options={['PRIMER', 'SEGUNDO', 'TERCERO', 'CIERRE 24 HORAS']}
+                    options={['PRIMER TURNO', 'SEGUNDO TURNO', 'TERCER TURNO', 'CIERRE 24 HORAS']}
                     defaultValue={cierreTurnoValue}
                     onChange={(e) => setCierreTurnoValue(e.target.value)}
                   />
