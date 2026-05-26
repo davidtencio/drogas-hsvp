@@ -18,7 +18,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -50,6 +50,7 @@ const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
 const MAX_SYNC_EVENTS = 200;
+const WRITE_BATCH_SIZE = 200;
 const BACKUP_SCHEMA_VERSION = 2;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
@@ -697,10 +698,20 @@ const App = () => {
       logSyncEvent('enqueue_blocked', `${action.collection}/${action.id}`);
       return;
     }
-    const next = [...(pendingWritesRef.current || []), action];
-    const ok = persistPendingWrites(next);
+    const enriched = { ...action, opId: action.opId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
+    const next = [...(pendingWritesRef.current || []), enriched];
+    const deduped = [];
+    const seenOpIds = new Set();
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      const item = next[i];
+      if (seenOpIds.has(item.opId)) continue;
+      seenOpIds.add(item.opId);
+      deduped.push(item);
+    }
+    deduped.reverse();
+    const ok = persistPendingWrites(deduped);
     if (!ok) return;
-    logSyncEvent('enqueue', `${action.type} ${action.collection}/${action.id}`);
+    logSyncEvent('enqueue', `${enriched.type} ${enriched.collection}/${enriched.id}`);
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -715,22 +726,28 @@ const App = () => {
     try {
       const remaining = [];
       const errors = [];
-      for (const action of queue) {
+      const chunks = [];
+      for (let i = 0; i < queue.length; i += WRITE_BATCH_SIZE) chunks.push(queue.slice(i, i + WRITE_BATCH_SIZE));
+      for (const group of chunks) {
         try {
-          if (action.type === 'set') {
-            await setDoc(doc(db, dataDocPath, action.collection, String(action.id)), action.data, { merge: true });
-          } else if (action.type === 'delete') {
-            await deleteDoc(doc(db, dataDocPath, action.collection, String(action.id)));
-          }
+          const batch = writeBatch(db);
+          group.forEach((action) => {
+            const ref = doc(db, dataDocPath, action.collection, String(action.id));
+            if (action.type === 'set') batch.set(ref, action.data, { merge: true });
+            else if (action.type === 'delete') batch.delete(ref);
+          });
+          await batch.commit();
         } catch (error) {
-          remaining.push(action);
-          errors.push({
-            id: action.id,
-            collection: action.collection,
-            type: action.type,
-            code: error?.code || 'unknown',
-            message: error?.message || 'No error message',
-            time: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+          group.forEach((action) => {
+            remaining.push(action);
+            errors.push({
+              id: action.id,
+              collection: action.collection,
+              type: action.type,
+              code: error?.code || 'unknown',
+              message: error?.message || 'No error message',
+              time: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+            });
           });
         }
       }
@@ -756,7 +773,9 @@ const App = () => {
         setSyncError('Algunos registros no pudieron sincronizarse.');
         setSyncErrors((prev) => [...errors, ...prev].slice(0, 50));
         if (!retryTimeoutRef.current) {
-          const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
+          const baseDelay = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
+          const jitter = Math.floor(Math.random() * 600);
+          const delayMs = baseDelay + jitter;
           logSyncEvent('retry_scheduled', `remaining=${remaining.length} delayMs=${delayMs}`);
           retryTimeoutRef.current = setTimeout(() => {
             retryTimeoutRef.current = null;
