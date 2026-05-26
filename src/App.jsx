@@ -523,24 +523,8 @@ const App = () => {
 
   const getRxProgress = (t) => {
     if (t.rxType !== 'ABIERTA') return '';
-    const matches = transactions.filter(
-      (x) =>
-        x.medId === t.medId &&
-        x.prescription === t.prescription &&
-        x.type === 'OUT' &&
-        x.rxType === 'ABIERTA'
-    );
-    const sorted = matches.sort((a, b) => {
-      const timeA = a.createdAt || parseDateTime(a.date)?.getTime() || 0;
-      const timeB = b.createdAt || parseDateTime(b.date)?.getTime() || 0;
-      return timeA - timeB || a.id - b.id;
-    });
-    let sum = 0;
-    for (const m of sorted) {
-      sum += m.amount;
-      if (m.id === t.id) break;
-    }
-    return `${sum} de ${t.rxQuantity}`;
+    const used = Number(t.rxUsed) || 0;
+    return `${used} de ${t.rxQuantity}`;
   };
 
   const nextOpenRxUse = (items, medId, prescription, rxQuantity) => {
