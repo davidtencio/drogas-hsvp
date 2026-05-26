@@ -49,6 +49,7 @@ const INITIAL_CLOUD_LOAD = 200;
 const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
+const MAX_SYNC_EVENTS = 200;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
@@ -88,6 +89,7 @@ const App = () => {
   const [cloudLoading, setCloudLoading] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
+  const [syncEvents, setSyncEvents] = useState([]);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
@@ -568,9 +570,27 @@ const App = () => {
         setQueueOverflow(true);
         setWriteBlockedByStorage(true);
         setSyncError('Cola offline sin espacio: nuevas escrituras bloqueadas hasta sincronizar/liberar espacio.');
+        setSyncEvents((prev) => [
+          {
+            at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+            type: 'blocked_by_quota',
+            detail: 'Sin espacio en almacenamiento local para cola offline.',
+          },
+          ...prev,
+        ].slice(0, MAX_SYNC_EVENTS));
       }
       return false;
     }
+  };
+  const logSyncEvent = (type, detail) => {
+    setSyncEvents((prev) => [
+      {
+        at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+        type,
+        detail,
+      },
+      ...prev,
+    ].slice(0, MAX_SYNC_EVENTS));
   };
   const persistPendingWrites = (items) => {
     // Keep the newest actions so recent deletes/edits are not dropped.
@@ -615,11 +635,13 @@ const App = () => {
   const enqueueWrite = (action) => {
     if (writeBlockedByStorage) {
       setSyncError('Escritura bloqueada: libere espacio local o sincronice pendientes.');
+      logSyncEvent('enqueue_blocked', `${action.collection}/${action.id}`);
       return;
     }
     const next = [...(pendingWritesRef.current || []), action];
     const ok = persistPendingWrites(next);
     if (!ok) return;
+    logSyncEvent('enqueue', `${action.type} ${action.collection}/${action.id}`);
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -630,6 +652,7 @@ const App = () => {
     if (queue.length === 0) return;
     isFlushingRef.current = true;
     setCloudStatus('Sincronizando...');
+    logSyncEvent('flush_start', `items=${queue.length}`);
     try {
       const remaining = [];
       const errors = [];
@@ -662,12 +685,14 @@ const App = () => {
         retryCountRef.current = 0;
         setSyncErrors([]);
         setQueueOverflow(false);
+        logSyncEvent('flush_ok', `items=${queue.length}`);
       } else {
         setCloudStatus('Sin conexion');
         setSyncError('Algunos registros no pudieron sincronizarse.');
         setSyncErrors((prev) => [...errors, ...prev].slice(0, 50));
         if (!retryTimeoutRef.current) {
           const delayMs = Math.min(30000, 2000 * Math.pow(2, retryCountRef.current));
+          logSyncEvent('retry_scheduled', `remaining=${remaining.length} delayMs=${delayMs}`);
           retryTimeoutRef.current = setTimeout(() => {
             retryTimeoutRef.current = null;
             retryCountRef.current += 1;
@@ -677,6 +702,7 @@ const App = () => {
       }
     } catch {
       setCloudStatus('Sin conexion');
+      logSyncEvent('flush_error', 'Error general en flush');
     } finally {
       isFlushingRef.current = false;
     }
@@ -1596,6 +1622,29 @@ const App = () => {
     });
     return map;
   }, [transactions, selectedMedId, medications]);
+  const pendingWriteKeySet = useMemo(() => {
+    const set = new Set();
+    (pendingWritesRef.current || []).forEach((w) => {
+      set.add(`${w.collection}:${String(w.id)}`);
+    });
+    return set;
+  }, [pendingCount]);
+  const syncMetrics = useMemo(() => {
+    const counters = syncEvents.reduce(
+      (acc, e) => {
+        acc[e.type] = (acc[e.type] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+    return {
+      totalEvents: syncEvents.length,
+      enqueueCount: counters.enqueue || 0,
+      flushOkCount: counters.flush_ok || 0,
+      flushErrorCount: (counters.flush_error || 0) + (counters.retry_scheduled || 0),
+      blockedCount: (counters.blocked_by_quota || 0) + (counters.enqueue_blocked || 0),
+    };
+  }, [syncEvents]);
   const getLiveBalanceForMedication = (medId) => {
     const medItems = transactions
       .filter((t) => t.medId === medId)
@@ -2677,7 +2726,14 @@ const App = () => {
                           </button>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                      <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>{t.pharmacist}</span>
+                          <span className={`text-[9px] ${pendingWriteKeySet.has(`transactions:${String(t.id)}`) ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {pendingWriteKeySet.has(`transactions:${String(t.id)}`) ? 'PENDIENTE' : 'SYNC'}
+                          </span>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {recentTransactions.length === 0 && (
@@ -2855,7 +2911,14 @@ const App = () => {
                             </button>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">{t.pharmacist}</td>
+                        <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">
+                          <div className="flex flex-col items-center gap-1">
+                            <span>{t.pharmacist}</span>
+                            <span className={`text-[9px] ${pendingWriteKeySet.has(`transactions:${String(t.id)}`) ? 'text-amber-600' : 'text-emerald-600'}`}>
+                              {pendingWriteKeySet.has(`transactions:${String(t.id)}`) ? 'PENDIENTE' : 'SYNC'}
+                            </span>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                     {historicTransactions.length === 0 && (
@@ -3858,6 +3921,12 @@ const App = () => {
               ) : modalType === 'sync-log' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Ultimos errores de sincronizacion (max 50).</p>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] font-bold uppercase">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Eventos: {syncMetrics.totalEvents}</div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Pendientes: {pendingCount}</div>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">Flush OK: {syncMetrics.flushOkCount}</div>
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">Errores/Retry: {syncMetrics.flushErrorCount}</div>
+                  </div>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {syncErrors.map((err, idx) => (
                       <div key={`${err.id}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
@@ -3867,6 +3936,17 @@ const App = () => {
                       </div>
                     ))}
                     {syncErrors.length === 0 && <p className="text-xs text-slate-400">Sin errores registrados.</p>}
+                  </div>
+                  <p className="text-xs text-slate-500">Eventos recientes de sincronizacion (max 200).</p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {syncEvents.map((evt, idx) => (
+                      <div key={`${evt.at}-${evt.type}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-slate-700">
+                          [{evt.at}] {evt.type} - {evt.detail}
+                        </span>
+                      </div>
+                    ))}
+                    {syncEvents.length === 0 && <p className="text-xs text-slate-400">Sin eventos registrados.</p>}
                   </div>
                   <button
                     type="button"
