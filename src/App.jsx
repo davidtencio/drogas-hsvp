@@ -49,7 +49,6 @@ const INITIAL_CLOUD_LOAD = 200;
 const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
-const MIN_PENDING_WRITES = 20;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
@@ -91,6 +90,7 @@ const App = () => {
   const [syncErrors, setSyncErrors] = useState([]);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
+  const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
   const [showHistoric, setShowHistoric] = useState(false);
   const [kardexSearch, setKardexSearch] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -559,33 +559,15 @@ const App = () => {
       return true;
     } catch (error) {
       if (!isQuotaExceededError(error)) return false;
-      if (key === 'pharmaPendingWrites') {
-        // Si la cola no cabe, recortamos los registros mas viejos para priorizar cambios recientes.
-        try {
-          const parsed = JSON.parse(value);
-          if (Array.isArray(parsed) && parsed.length > MIN_PENDING_WRITES) {
-            const trimmed = parsed.slice(-Math.max(MIN_PENDING_WRITES, Math.floor(parsed.length / 2)));
-            localStorage.setItem(key, JSON.stringify(trimmed));
-            pendingWritesRef.current = trimmed;
-            setPendingCount(trimmed.length);
-            setQueueOverflow(true);
-            setSyncError('Se redujo la cola local por limite de almacenamiento del navegador.');
-            return true;
-          }
-        } catch {
-          // No-op: si no se puede recortar, limpiamos abajo.
-        }
-      }
       try {
         localStorage.removeItem(key);
       } catch {
         // Ignorar errores de limpieza.
       }
       if (key === 'pharmaPendingWrites') {
-        pendingWritesRef.current = [];
-        setPendingCount(0);
         setQueueOverflow(true);
-        setSyncError('No hay espacio local para cola offline. Libere almacenamiento del navegador.');
+        setWriteBlockedByStorage(true);
+        setSyncError('Cola offline sin espacio: nuevas escrituras bloqueadas hasta sincronizar/liberar espacio.');
       }
       return false;
     }
@@ -594,9 +576,11 @@ const App = () => {
     // Keep the newest actions so recent deletes/edits are not dropped.
     const capped = items.slice(-MAX_PENDING_WRITES);
     setQueueOverflow(items.length > MAX_PENDING_WRITES);
+    const persisted = safeSetLocalStorage('pharmaPendingWrites', JSON.stringify(capped));
+    if (!persisted) return false;
     pendingWritesRef.current = capped;
-    safeSetLocalStorage('pharmaPendingWrites', JSON.stringify(capped));
     setPendingCount((pendingWritesRef.current || []).length);
+    return true;
   };
 
   const handleOpenRxUse = (transaction, overridePharmacist, overrideAmount) => {
@@ -629,8 +613,13 @@ const App = () => {
   };
 
   const enqueueWrite = (action) => {
+    if (writeBlockedByStorage) {
+      setSyncError('Escritura bloqueada: libere espacio local o sincronice pendientes.');
+      return;
+    }
     const next = [...(pendingWritesRef.current || []), action];
-    persistPendingWrites(next);
+    const ok = persistPendingWrites(next);
+    if (!ok) return;
     if (!authUser) return;
     flushWriteQueue();
   };
@@ -669,6 +658,7 @@ const App = () => {
         localStorage.removeItem('pharmaControlData');
         setCloudStatus('Sincronizado');
         setSyncError('');
+        setWriteBlockedByStorage(false);
         retryCountRef.current = 0;
         setSyncErrors([]);
         setQueueOverflow(false);
@@ -1801,6 +1791,10 @@ const App = () => {
         enqueueWrite({ type: 'set', collection: 'expedientes', id: newEntry.id, data: newEntry });
       }
     } else if (modalType === 'cierre') {
+      if (pendingCount > 0) {
+        alert('No puede guardar cierre con pendientes de sincronizacion.');
+        return;
+      }
       const cierreTurno = toUpper(formData.get('turno'));
       const computedTotalMedicamento =
         cierreTurno === 'CIERRE 24 HORAS'
@@ -2138,6 +2132,11 @@ const App = () => {
                 Cola llena (200)
               </span>
             )}
+            {writeBlockedByStorage && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">
+                Escrituras bloqueadas por almacenamiento local
+              </span>
+            )}
             {syncError && (
               <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">
                 {syncError}
@@ -2158,6 +2157,7 @@ const App = () => {
                   setPendingCount(0);
                   setSyncErrors([]);
                   setSyncError('');
+                  setWriteBlockedByStorage(false);
                   localStorage.removeItem('pharmaPendingWrites');
                 }}
                 className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -2168,6 +2168,10 @@ const App = () => {
             {authUser && (
               <button
                 onClick={async () => {
+                  if (pendingCount > 0) {
+                    alert('No puede salir con pendientes de sincronizacion. Sincronice o limpie cola primero.');
+                    return;
+                  }
                   await signOut(auth);
                   setTransactions([]);
                   setExpedientes([]);
@@ -2179,6 +2183,7 @@ const App = () => {
                   setSelectedMedId(INITIAL_MEDICATIONS[0].id);
                   setPendingCount(0);
                   setSyncErrors([]);
+                  setWriteBlockedByStorage(false);
                   pendingWritesRef.current = [];
                   isFlushingRef.current = false;
                   if (retryTimeoutRef.current) {
@@ -2488,6 +2493,10 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => {
+                      if (pendingCount > 0) {
+                        alert('No puede realizar cierre con pendientes de sincronizacion.');
+                        return;
+                      }
                       setModalType('cierre');
                       setCierreTurnoValue('SEGUNDO');
                       setShowCatalogMenu(false);
