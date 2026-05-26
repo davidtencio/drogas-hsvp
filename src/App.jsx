@@ -3708,9 +3708,9 @@ const App = () => {
                   setRxTypeValue('CERRADA');
                   setDosisType('UNICA');
                 }}
-                className="text-slate-400 hover:text-slate-600"
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
               >
-                x
+                Cerrar
               </button>
             </div>
 
