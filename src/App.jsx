@@ -2005,10 +2005,7 @@ const App = () => {
         return;
       }
       const cierreTurno = toUpper(formData.get('turno'));
-      const computedTotalMedicamento =
-        cierreTurno === 'CIERRE 24 HORAS'
-          ? Number(selectedCurrentStock) || 0
-          : getLiveBalanceForMedication(selectedMedId);
+      const computedTotalMedicamento = Number(selectedCurrentStock) || 0;
       const newCierre = {
         id: Date.now(),
         date: now,
