@@ -130,6 +130,9 @@ const App = () => {
   const [requestPharmacist, setRequestPharmacist] = useState('');
   const [selectedRequestMeds, setSelectedRequestMeds] = useState({});
   const [pendingOpenRxTransaction, setPendingOpenRxTransaction] = useState(null);
+  const [pendingOpenRxAdjustTransaction, setPendingOpenRxAdjustTransaction] = useState(null);
+  const [openRxAdjustValue, setOpenRxAdjustValue] = useState('');
+  const [openRxAdjustPharmacistValue, setOpenRxAdjustPharmacistValue] = useState(INITIAL_PHARMACISTS[0] || '');
   const [pendingRepeatExpediente, setPendingRepeatExpediente] = useState(null);
   // Data States moved up
   const [transactions, setTransactions] = useState([
@@ -1805,7 +1808,36 @@ const App = () => {
     () => currentInventory.find((m) => m.id === selectedMedId)?.stock ?? 0,
     [currentInventory, selectedMedId],
   );
-  const requestInventory = useMemo(() => [...currentInventory], [currentInventory]);
+  const totalReponerByMedId = useMemo(() => {
+    const quotaByMedId = new Map(medications.map((m) => [m.id, Number(m.quota) || 0]));
+    const latestByMedId = new Map();
+    transactions.forEach((t) => {
+      if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
+      const medId = t.medId;
+      if (!medId) return;
+      const ts = getTransactionTimestamp(t);
+      const quota = quotaByMedId.get(medId) || 0;
+      const currentStockAtClose = Number(t.totalMedicamento) || 0;
+      const totalReponer = Math.max(0, quota - currentStockAtClose);
+      const prev = latestByMedId.get(medId);
+      if (!prev || ts >= prev.ts) {
+        latestByMedId.set(medId, { ts, totalReponer });
+      }
+    });
+    const map = {};
+    latestByMedId.forEach((value, medId) => {
+      map[medId] = value.totalReponer;
+    });
+    return map;
+  }, [transactions, medications]);
+  const requestInventory = useMemo(
+    () =>
+      currentInventory.map((med) => ({
+        ...med,
+        totalReponer: totalReponerByMedId[med.id] ?? 0,
+      })),
+    [currentInventory, totalReponerByMedId],
+  );
   const handleSave = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -1995,6 +2027,30 @@ const App = () => {
       handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
       setPendingOpenRxTransaction(null);
       setOpenRxAmountValue('');
+    } else if (modalType === 'open-rx-adjust') {
+      if (!pendingOpenRxAdjustTransaction) return;
+      const selectedPharmacist = toUpper(formData.get('openRxAdjustPharmacist'));
+      const selectedValue = parseInt(formData.get('openRxAdjustValue'), 10);
+      if (!selectedPharmacist) return;
+      if (!Number.isFinite(selectedValue) || selectedValue < 0) return;
+      const rxQuantity = Number(pendingOpenRxAdjustTransaction.rxQuantity) || 0;
+      if (rxQuantity > 0 && selectedValue > rxQuantity) {
+        alert(`El nuevo dato no puede ser mayor a ${rxQuantity}.`);
+        return;
+      }
+      const currentRxUsed = Number(pendingOpenRxAdjustTransaction.rxUsed) || 0;
+      const updated = {
+        ...pendingOpenRxAdjustTransaction,
+        rxUsed: selectedValue,
+        rxAdjusted: true,
+        rxAdjustedAt: now,
+        rxAdjustedBy: selectedPharmacist,
+        rxAdjustedFrom: currentRxUsed,
+      };
+      setTransactions(transactions.map((t) => (t.id === updated.id ? updated : t)));
+      enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
+      setPendingOpenRxAdjustTransaction(null);
+      setOpenRxAdjustValue('');
     } else if (modalType === 'auditoria-repeat') {
       if (!pendingRepeatExpediente) return;
       const selectedCondition = toUpper(formData.get('repeatCondicion'));
@@ -2110,6 +2166,10 @@ const App = () => {
     setEditingExpedienteId(null);
     setRxTypeValue('CERRADA');
     setDosisType('UNICA');
+    setPendingOpenRxTransaction(null);
+    setPendingOpenRxAdjustTransaction(null);
+    setOpenRxAmountValue('');
+    setOpenRxAdjustValue('');
   };
 
   const getKardexRowClass = (t) => {
@@ -2781,10 +2841,21 @@ const App = () => {
                               setModalType('open-rx-use');
                               setShowModal(true);
                             }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setPendingOpenRxAdjustTransaction(t);
+                              setOpenRxAdjustValue(String(t.rxUsed || 0));
+                              setOpenRxAdjustPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                              setModalType('open-rx-adjust');
+                              setShowModal(true);
+                            }}
                             className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
-                            title="Registrar nuevo rebajo"
+                            title="Click: registrar rebajo | Click derecho: ajustar X de Y"
                           >
-                            {getRxProgress(t)}
+                            <span className="inline-flex items-center gap-1">
+                              {t.rxAdjusted && <span className="text-rose-600 text-[10px]" title={`Ajustado por ${t.rxAdjustedBy || 'N/A'}: ${t.rxAdjustedFrom ?? 0} -> ${t.rxUsed ?? 0} (${t.rxAdjustedAt || 'sin fecha'})`}>▲</span>}
+                              {getRxProgress(t)}
+                            </span>
                           </button>
                         ) : (
                           <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
@@ -2977,10 +3048,21 @@ const App = () => {
                                 setModalType('open-rx-use');
                                 setShowModal(true);
                               }}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                setPendingOpenRxAdjustTransaction(t);
+                                setOpenRxAdjustValue(String(t.rxUsed || 0));
+                                setOpenRxAdjustPharmacistValue(pharmacists[0] || t.pharmacist || '');
+                                setModalType('open-rx-adjust');
+                                setShowModal(true);
+                              }}
                               className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100"
-                              title="Registrar nuevo rebajo"
+                              title="Click: registrar rebajo | Click derecho: ajustar X de Y"
                             >
-                              {getRxProgress(t)}
+                              <span className="inline-flex items-center gap-1">
+                                {t.rxAdjusted && <span className="text-rose-600 text-[10px]" title={`Ajustado por ${t.rxAdjustedBy || 'N/A'}: ${t.rxAdjustedFrom ?? 0} -> ${t.rxUsed ?? 0} (${t.rxAdjustedAt || 'sin fecha'})`}>▲</span>}
+                                {getRxProgress(t)}
+                              </span>
                             </button>
                           ) : (
                             <span className="text-xs font-bold uppercase text-slate-500">{t.rxType === 'ABIERTA' ? 'Abierta' : 'Cerrada'}</span>
@@ -3323,7 +3405,7 @@ const App = () => {
                       <th className="px-6 py-3 w-16 text-center">Sel.</th>
                       <th className="px-6 py-3">Medicamento</th>
                       <th className="px-6 py-3 text-center">Stock Actual</th>
-                      <th className="px-6 py-3 text-center">Consumo Semanal</th>
+                      <th className="px-6 py-3 text-center">Total a Reponer</th>
                       <th className="px-6 py-3 text-center w-32">Solicitar</th>
                     </tr>
                   </thead>
@@ -3342,7 +3424,7 @@ const App = () => {
                         <td className={`px-6 py-3 text-center font-bold ${med.stock < 15 ? 'text-rose-600' : 'text-emerald-600'}`}>
                           {med.stock}
                         </td>
-                        <td className="px-6 py-3 text-center text-slate-500">{med.weeklyOut}</td>
+                        <td className="px-6 py-3 text-center text-slate-500">{med.totalReponer}</td>
                         <td className="px-6 py-2 text-center">
                           <input
                             type="number"
@@ -3676,6 +3758,8 @@ const App = () => {
                               ? 'Cierre de Inventario'
                               : modalType === 'open-rx-use'
                                 ? 'Registrar Rebajo Receta Abierta'
+                              : modalType === 'open-rx-adjust'
+                                ? 'Ajustar Progreso Receta Abierta'
                               : modalType === 'cross-check'
                                 ? 'Control Cruzado de Saldo'
                               : modalType === 'sync-log'
@@ -3707,6 +3791,10 @@ const App = () => {
                   setIsQuickIngreso(false);
                   setRxTypeValue('CERRADA');
                   setDosisType('UNICA');
+                  setPendingOpenRxTransaction(null);
+                  setPendingOpenRxAdjustTransaction(null);
+                  setOpenRxAmountValue('');
+                  setOpenRxAdjustValue('');
                 }}
                 className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
               >
@@ -3916,6 +4004,33 @@ const App = () => {
                     options={pharmacists}
                     defaultValue={openRxPharmacistValue}
                     onChange={(e) => setOpenRxPharmacistValue(e.target.value)}
+                    required
+                  />
+                </>
+              ) : modalType === 'open-rx-adjust' ? (
+                <>
+                  <InputLabel
+                    label="Dato Actual"
+                    name="openRxAdjustCurrent"
+                    value={String(pendingOpenRxAdjustTransaction?.rxUsed ?? 0)}
+                    disabled
+                  />
+                  <InputLabel
+                    label="Nuevo Dato"
+                    name="openRxAdjustValue"
+                    type="number"
+                    min="0"
+                    max={String(pendingOpenRxAdjustTransaction?.rxQuantity ?? 0)}
+                    value={openRxAdjustValue}
+                    onChange={(e) => setOpenRxAdjustValue(e.target.value)}
+                    required
+                  />
+                  <SelectLabel
+                    label="Farmaceutico"
+                    name="openRxAdjustPharmacist"
+                    options={pharmacists}
+                    defaultValue={openRxAdjustPharmacistValue}
+                    onChange={(e) => setOpenRxAdjustPharmacistValue(e.target.value)}
                     required
                   />
                 </>
