@@ -1233,10 +1233,24 @@ const App = () => {
   };
 
   const toggleRequestMed = (medId) => {
-    setSelectedRequestMeds((prev) => ({
-      ...prev,
-      [medId]: !prev[medId],
-    }));
+    const med = requestInventory.find((item) => item.id === medId);
+    const defaultQty = Number(med?.totalReponer) || 0;
+    setSelectedRequestMeds((prev) => {
+      const nextSelected = !prev[medId];
+      if (nextSelected) {
+        setRequestQuantities((prevQty) => {
+          if (prevQty[medId] !== undefined) return prevQty;
+          return {
+            ...prevQty,
+            [medId]: defaultQty,
+          };
+        });
+      }
+      return {
+        ...prev,
+        [medId]: nextSelected,
+      };
+    });
   };
 
   const generateRequestPDF = async () => {
@@ -3429,7 +3443,7 @@ const App = () => {
                           <input
                             type="number"
                             min="0"
-                            value={requestQuantities[med.id] || ''}
+                            value={requestQuantities[med.id] ?? ''}
                             onChange={(e) => handleRequestChange(med.id, e.target.value)}
                             disabled={!selectedRequestMeds[med.id]}
                             className={`w-20 border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none ${!selectedRequestMeds[med.id] ? 'bg-slate-100 text-slate-400' : 'bg-white'}`}
