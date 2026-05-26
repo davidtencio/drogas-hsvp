@@ -589,11 +589,20 @@ const App = () => {
     if (nextUsed <= transaction.rxUsed) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
-    const now = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
+    const now = new Date().toLocaleString('es-CR', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+      timeZone: CR_TIMEZONE,
+    });
     const newTransaction = {
       ...transaction,
       id: Date.now(),
       date: now,
+      createdAt: Date.now(),
       type: 'OUT',
       amount: amountToUse,
       rxUsed: nextUsed,
