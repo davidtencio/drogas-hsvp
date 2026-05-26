@@ -92,6 +92,7 @@ const App = () => {
   const [syncErrors, setSyncErrors] = useState([]);
   const [syncEvents, setSyncEvents] = useState([]);
   const [restoreAuditLog, setRestoreAuditLog] = useState([]);
+  const [backupAuditLog, setBackupAuditLog] = useState([]);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
@@ -367,6 +368,14 @@ const App = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    setBackupAuditLog((prev) => [
+      {
+        at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+        fileName: link.download,
+        summary,
+      },
+      ...prev,
+    ].slice(0, 20));
   };
   const restoreDatabaseBackup = async (file) => {
     if (!file || !authUser) return;
@@ -725,7 +734,13 @@ const App = () => {
           });
         }
       }
-      persistPendingWrites(remaining);
+      const persisted = persistPendingWrites(remaining);
+      if (!persisted) {
+        setCloudStatus('Sin conexion');
+        setSyncError('No se pudo persistir la cola local de pendientes. Libere espacio y reintente.');
+        logSyncEvent('flush_error', 'Persistencia local de cola fallida');
+        return;
+      }
       if (remaining.length === 0) {
         localStorage.removeItem('pharmaPendingWrites');
         localStorage.removeItem('pharmaControlData');
@@ -1699,18 +1714,18 @@ const App = () => {
     const hasPending = pendingCount > 0;
     const hasSyncError = Boolean(syncError);
     const hasQueueRisk = queueOverflow || writeBlockedByStorage;
-    const hasRecentRestore = restoreAuditLog.length > 0;
+    const hasRecentBackup = backupAuditLog.length > 0;
     const checks = [
       { key: 'no_pending', label: 'Sin pendientes de sincronizacion', ok: !hasPending },
       { key: 'no_sync_error', label: 'Sin errores activos de sincronizacion', ok: !hasSyncError },
       { key: 'no_queue_risk', label: 'Sin riesgo de cola local', ok: !hasQueueRisk },
-      { key: 'backup_or_restore', label: 'Respaldo/restauracion verificada en sesion', ok: hasRecentRestore },
+      { key: 'recent_backup', label: 'Respaldo verificado en sesion', ok: hasRecentBackup },
     ];
     return {
       checks,
       approved: checks.every((c) => c.ok),
     };
-  }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, restoreAuditLog]);
+  }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, backupAuditLog]);
   const getLiveBalanceForMedication = (medId) => {
     const medItems = transactions
       .filter((t) => t.medId === medId)
