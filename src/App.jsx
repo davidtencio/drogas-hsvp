@@ -537,6 +537,9 @@ const App = () => {
     let used = 0;
     for (const item of matches) {
       used += Number(item.amount) || 0;
+      if (item.rxAdjusted) {
+        used = Number(item.rxUsed) || used;
+      }
       if (item.id === t.id) break;
     }
     used = Math.min(used, Number(t.rxQuantity) || 0);
