@@ -1059,6 +1059,19 @@ const App = () => {
 
   useEffect(() => {
     if (!authUser || !cloudReady) return;
+    if (!kardexSearch.trim()) return;
+    if (!collectionLoadState.transactions.hasMore || collectionLoadState.transactions.loading) return;
+    loadMoreCollection('transactions', setTransactions);
+  }, [
+    authUser,
+    cloudReady,
+    kardexSearch,
+    collectionLoadState.transactions.hasMore,
+    collectionLoadState.transactions.loading,
+  ]);
+
+  useEffect(() => {
+    if (!authUser || !cloudReady) return;
     const map = {
       kardex: { name: 'transactions', setter: setTransactions },
       auditoria: { name: 'expedientes', setter: setExpedientes },
@@ -1551,6 +1564,10 @@ const App = () => {
       return toUpper(haystack).includes(searchValue);
     };
     const medTransactions = transactions.filter((t) => t.medId === selectedMedId && matchesSearch(t));
+    if (searchValue) {
+      const allSorted = medTransactions.slice().sort(compareTransactionsDesc);
+      return { recentTransactions: allSorted, historicTransactions: [] };
+    }
     const cutoff = new Date();
     cutoff.setHours(0, 0, 0, 0);
     cutoff.setDate(cutoff.getDate() - 7);
