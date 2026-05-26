@@ -875,7 +875,7 @@ const App = () => {
           const initialLoadLimit = Math.max(25, Math.min(maxRecordsLimit, INITIAL_CLOUD_LOAD));
           const items = [];
           let lastDoc = null;
-          let usedFallback = false;
+          let indexError = false;
           let hadError = false;
           while (items.length < initialLoadLimit) {
             try {
@@ -889,21 +889,9 @@ const App = () => {
               if (snap.docs.length < 500) break;
               await delay(50);
             } catch {
-              usedFallback = true;
-              try {
-                const fallbackQuery = lastDoc
-                  ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(500))
-                  : query(colRef, orderBy('__name__'), limit(500));
-                const snap = await getDocs(fallbackQuery);
-                if (snap.empty) break;
-                items.push(...snap.docs.map((d) => d.data()));
-                lastDoc = snap.docs[snap.docs.length - 1];
-                if (snap.docs.length < 500) break;
-                await delay(50);
-              } catch {
-                hadError = true;
-                break;
-              }
+              indexError = true;
+              hadError = true;
+              break;
             }
           }
           lastDocRefs.current[name] = lastDoc;
@@ -912,7 +900,7 @@ const App = () => {
             [name]: { ...prev[name], hasMore: items.length >= initialLoadLimit },
           }));
           setter(items.slice(0, initialLoadLimit));
-          return { items, usedFallback, hadError };
+          return { items, indexError, hadError };
         };
         const [transactionsLoaded, expedientesLoaded, bitacoraLoaded] = await Promise.all([
           loadCollection('transactions', setTransactions),
@@ -958,12 +946,17 @@ const App = () => {
             { merge: true },
           );
         }
-        const anyFallback =
-          transactionsLoaded.usedFallback || expedientesLoaded.usedFallback || bitacoraLoaded.usedFallback;
+        const anyIndexError =
+          transactionsLoaded.indexError || expedientesLoaded.indexError || bitacoraLoaded.indexError;
         const anyError = transactionsLoaded.hadError || expedientesLoaded.hadError || bitacoraLoaded.hadError;
-        hadPartial = anyFallback || anyError;
+        hadPartial = anyIndexError || anyError;
         hadLoadError = anyError;
-        if (anyError) setCloudStatus('Sin conexion');
+        if (anyIndexError) {
+          setCloudStatus('Sin conexion');
+          setSyncError('Error de indice/consulta en Firestore (createdAt). Revise indices de colecciones.');
+        } else if (anyError) {
+          setCloudStatus('Sin conexion');
+        }
       } catch {
         try {
           const stored = JSON.parse(localStorage.getItem('pharmaControlData') || '{}');
@@ -1005,18 +998,10 @@ const App = () => {
     try {
       const colRef = collection(db, dataDocPath, name);
       const lastDoc = lastDocRefs.current[name];
-      let snap = null;
-      try {
-        const q = lastDoc
-          ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(LOAD_MORE_BATCH_SIZE))
-          : query(colRef, orderBy('createdAt', 'desc'), limit(LOAD_MORE_BATCH_SIZE));
-        snap = await getDocs(q);
-      } catch {
-        const fallbackQuery = lastDoc
-          ? query(colRef, orderBy('__name__'), startAfter(lastDoc), limit(LOAD_MORE_BATCH_SIZE))
-          : query(colRef, orderBy('__name__'), limit(LOAD_MORE_BATCH_SIZE));
-        snap = await getDocs(fallbackQuery);
-      }
+      const q = lastDoc
+        ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(LOAD_MORE_BATCH_SIZE))
+        : query(colRef, orderBy('createdAt', 'desc'), limit(LOAD_MORE_BATCH_SIZE));
+      const snap = await getDocs(q);
       if (!snap || snap.empty) {
         setCollectionLoadState((prev) => ({ ...prev, [name]: { loading: false, hasMore: false } }));
         return;
@@ -1043,6 +1028,7 @@ const App = () => {
         [name]: { loading: false, hasMore: !reachedEnd },
       }));
     } catch {
+      setSyncError('No se pudo cargar mas datos: falta indice createdAt o hay error de conexion.');
       setCollectionLoadState((prev) => ({ ...prev, [name]: { ...prev[name], loading: false } }));
     }
   };
