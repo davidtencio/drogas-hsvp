@@ -50,6 +50,7 @@ const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
 const MAX_SYNC_EVENTS = 200;
+const BACKUP_SCHEMA_VERSION = 2;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
@@ -90,6 +91,7 @@ const App = () => {
   const [syncError, setSyncError] = useState('');
   const [syncErrors, setSyncErrors] = useState([]);
   const [syncEvents, setSyncEvents] = useState([]);
+  const [restoreAuditLog, setRestoreAuditLog] = useState([]);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
@@ -322,9 +324,28 @@ const App = () => {
     if (resolver) resolver(Boolean(accepted));
   };
   const downloadDatabaseBackup = () => {
+    const summary = {
+      medications: medications.length,
+      transactions: transactions.length,
+      expedientes: expedientes.length,
+      bitacora: bitacora.length,
+      services: services.length,
+      pharmacists: pharmacists.length,
+      condiciones: condiciones.length,
+    };
+    const checksum = btoa(
+      unescape(
+        encodeURIComponent(
+          `${summary.medications}|${summary.transactions}|${summary.expedientes}|${summary.bitacora}|${summary.services}|${summary.pharmacists}|${summary.condiciones}|${selectedMedId}|${maxRecordsLimit}`,
+        ),
+      ),
+    );
     const payload = {
+      backupSchemaVersion: BACKUP_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       orgId: ORG_ID,
+      summary,
+      checksum,
       data: {
         medications,
         selectedMedId,
@@ -353,6 +374,7 @@ const App = () => {
     try {
       const raw = await file.text();
       const parsed = JSON.parse(raw);
+      const backupVersion = Number(parsed?.backupSchemaVersion || 1);
       const data = parsed?.data || parsed || {};
       const incomingMedications = Array.isArray(data.medications) ? data.medications : [];
       const incomingTransactions = Array.isArray(data.transactions) ? data.transactions : [];
@@ -365,6 +387,20 @@ const App = () => {
         typeof data.selectedMedId === 'string' && data.selectedMedId ? data.selectedMedId : incomingMedications[0]?.id;
       const incomingMaxRecords =
         Number.isFinite(data.maxRecords) && data.maxRecords > 0 ? data.maxRecords : maxRecordsLimit;
+      const incomingSummary = parsed?.summary || null;
+      const expectedChecksum = parsed?.checksum || '';
+      const recomputedChecksum = btoa(
+        unescape(
+          encodeURIComponent(
+            `${incomingMedications.length}|${incomingTransactions.length}|${incomingExpedientes.length}|${incomingBitacora.length}|${incomingServices.length}|${incomingPharmacists.length}|${incomingCondiciones.length}|${incomingSelectedMedId || incomingMedications[0]?.id || ''}|${incomingMaxRecords}`,
+          ),
+        ),
+      );
+      if (backupVersion < 1 || (expectedChecksum && expectedChecksum !== recomputedChecksum)) {
+        alert('El respaldo no paso validacion de integridad (version/checksum).');
+        setCloudStatus('Sincronizado');
+        return;
+      }
       if (incomingMedications.length === 0) {
         alert('El archivo no contiene medicamentos validos para restaurar.');
         setCloudStatus('Sincronizado');
@@ -447,6 +483,20 @@ const App = () => {
       setExpedientes(incomingExpedientes);
       setBitacora(incomingBitacora);
       setCloudStatus('Sincronizado');
+      setRestoreAuditLog((prev) => [
+        {
+          at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+          fileName: file.name,
+          backupVersion,
+          summary: incomingSummary || {
+            medications: incomingMedications.length,
+            transactions: incomingTransactions.length,
+            expedientes: incomingExpedientes.length,
+            bitacora: incomingBitacora.length,
+          },
+        },
+        ...prev,
+      ].slice(0, 20));
       alert('Restauracion completada.');
     } catch (error) {
       console.error(error);
@@ -3290,6 +3340,17 @@ const App = () => {
                   className="hidden"
                   onChange={(e) => restoreDatabaseBackup(e.target.files?.[0])}
                 />
+              </div>
+              <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <p className="text-[10px] font-bold uppercase text-slate-500">Auditoria de Restauraciones (ultimas 20)</p>
+                <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
+                  {restoreAuditLog.map((r, idx) => (
+                    <div key={`${r.at}-${idx}`} className="text-[10px] text-slate-700 border border-slate-200 bg-white rounded-md px-2 py-1">
+                      [{r.at}] {r.fileName} v{r.backupVersion} - TX:{r.summary?.transactions ?? 0} EXP:{r.summary?.expedientes ?? 0}
+                    </div>
+                  ))}
+                  {restoreAuditLog.length === 0 && <p className="text-[10px] text-slate-400">Sin restauraciones registradas en esta sesion.</p>}
+                </div>
               </div>
               <div className="mt-4">
                 <InputLabel
