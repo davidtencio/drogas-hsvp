@@ -613,8 +613,7 @@ const App = () => {
       .filter(
         (t) =>
           t.medId === medId &&
-          t.isCierre &&
-          (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO'),
+          t.isCierre,
       )
       .sort(compareTransactionsDesc)[0];
   const isQuotaExceededError = (error) =>
@@ -1720,12 +1719,9 @@ const App = () => {
     let running = 0;
     const balanceMap = {};
     medItems.forEach((t) => {
-      if (
-        t.isCierre &&
-        (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO')
-      ) {
+      if (t.isCierre) {
         running = Number(t.totalMedicamento) || 0;
-      } else if (!t.isCierre) {
+      } else {
         const amount = Number(t.amount) || 0;
         running += t.type === 'IN' ? amount : -amount;
       }
@@ -1794,12 +1790,9 @@ const App = () => {
       .sort(compareTransactionsAsc);
     let running = 0;
     medItems.forEach((t) => {
-      if (
-        t.isCierre &&
-        (t.cierreTurno === 'CIERRE 24 HORAS' || t.cierreTurno === 'AJUSTE MANUAL SALDO')
-      ) {
+      if (t.isCierre) {
         running = Number(t.totalMedicamento) || 0;
-      } else if (!t.isCierre) {
+      } else {
         const amount = Number(t.amount) || 0;
         running += t.type === 'IN' ? amount : -amount;
       }
