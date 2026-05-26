@@ -3440,8 +3440,7 @@ const App = () => {
                             min="0"
                             value={requestQuantities[med.id] ?? ''}
                             onChange={(e) => handleRequestChange(med.id, e.target.value)}
-                            disabled={!selectedRequestMeds[med.id]}
-                            className={`w-20 border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none ${!selectedRequestMeds[med.id] ? 'bg-slate-100 text-slate-400' : 'bg-white'}`}
+                            className="w-20 border border-slate-200 rounded-md py-1 px-2 text-center text-sm font-bold focus:ring-2 focus:ring-blue-600 outline-none bg-white"
                             placeholder="0"
                           />
                         </td>
