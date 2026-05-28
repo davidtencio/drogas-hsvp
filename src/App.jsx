@@ -50,6 +50,11 @@ const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
 const MAX_PENDING_WRITES = 200;
 const MAX_SYNC_EVENTS = 200;
+// Cache local (offline fallback): mantenemos solo los N mas recientes por coleccion
+// para no saturar el cupo de localStorage (~5 MB). Firestore sigue siendo la fuente de verdad.
+const LOCAL_CACHE_TX_LIMIT = 200;
+const LOCAL_CACHE_EXP_LIMIT = 200;
+const LOCAL_CACHE_BITACORA_LIMIT = 100;
 const WRITE_BATCH_SIZE = 200;
 const BACKUP_SCHEMA_VERSION = 2;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
@@ -296,8 +301,12 @@ const App = () => {
       totalRecetas: 0,
       totalMedicamento: amount,
     };
+    const okAdjust = enqueueWrite({ type: 'set', collection: 'transactions', id: newAdjustment.id, data: newAdjustment });
+    if (!okAdjust) {
+      notifyWriteFailed('el ajuste manual');
+      return;
+    }
     setTransactions([newAdjustment, ...transactions]);
-    enqueueWrite({ type: 'set', collection: 'transactions', id: newAdjustment.id, data: newAdjustment });
     setAdjustBalanceValue('');
     alert('Ajuste manual de saldo aplicado.');
     });
@@ -628,24 +637,46 @@ const App = () => {
       return true;
     } catch (error) {
       if (!isQuotaExceededError(error)) return false;
+      // Autopurga: el cache pharmaControlData es redundante con Firestore.
+      // Solo lo borramos si el escritor actual NO es pharmaControlData (si no, abajo cae al fallback igual).
+      if (key !== 'pharmaControlData') {
+        try { localStorage.removeItem('pharmaControlData'); } catch { /* noop */ }
+        try {
+          localStorage.setItem(key, value);
+          setSyncEvents((prev) => [
+            {
+              at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+              type: 'quota_autopurge',
+              detail: `Purgado pharmaControlData para liberar espacio (key=${key}).`,
+            },
+            ...prev,
+          ].slice(0, MAX_SYNC_EVENTS));
+          return true;
+        } catch { /* sigue lleno: bloqueamos abajo */ }
+      }
       try {
         localStorage.removeItem(key);
       } catch {
         // Ignorar errores de limpieza.
       }
-      if (key === 'pharmaPendingWrites') {
-        setQueueOverflow(true);
-        setWriteBlockedByStorage(true);
-        setSyncError('Cola offline sin espacio: nuevas escrituras bloqueadas hasta sincronizar/liberar espacio.');
-        setSyncEvents((prev) => [
-          {
-            at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
-            type: 'blocked_by_quota',
-            detail: 'Sin espacio en almacenamiento local para cola offline.',
-          },
-          ...prev,
-        ].slice(0, MAX_SYNC_EVENTS));
-      }
+      // Cualquier key que llegue aqui implica que ya no podemos persistir.
+      // Bloqueamos escrituras y avisamos. Esto incluye pharmaControlData,
+      // porque si ese key no se puede guardar el cache local quedo inconsistente.
+      setWriteBlockedByStorage(true);
+      if (key === 'pharmaPendingWrites') setQueueOverflow(true);
+      setSyncError(
+        key === 'pharmaPendingWrites'
+          ? 'Cola offline sin espacio: nuevas escrituras bloqueadas hasta sincronizar/liberar espacio.'
+          : 'Sin espacio en almacenamiento local: nuevas escrituras bloqueadas hasta liberar espacio.',
+      );
+      setSyncEvents((prev) => [
+        {
+          at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+          type: 'blocked_by_quota',
+          detail: `Sin espacio en almacenamiento local (key=${key}).`,
+        },
+        ...prev,
+      ].slice(0, MAX_SYNC_EVENTS));
       return false;
     }
   };
@@ -701,15 +732,27 @@ const App = () => {
       rxUsed: nextUsed,
       pharmacist: toUpper(overridePharmacist || transaction.pharmacist),
     };
+    const okOpenRx = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
+    if (!okOpenRx) {
+      notifyWriteFailed('el rebajo');
+      return;
+    }
     setTransactions([newTransaction, ...transactions]);
-    enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
+  };
+
+  const notifyWriteFailed = (label) => {
+    alert(
+      `No se pudo guardar ${label || 'el registro'}.\n\n` +
+      'Almacenamiento local lleno o sincronizacion bloqueada.\n' +
+      'Sincronice pendientes o libere espacio antes de continuar.',
+    );
   };
 
   const enqueueWrite = (action) => {
     if (writeBlockedByStorage) {
       setSyncError('Escritura bloqueada: libere espacio local o sincronice pendientes.');
       logSyncEvent('enqueue_blocked', `${action.collection}/${action.id}`);
-      return;
+      return false;
     }
     const enriched = { ...action, opId: action.opId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
     const next = [...(pendingWritesRef.current || []), enriched];
@@ -723,10 +766,11 @@ const App = () => {
     }
     deduped.reverse();
     const ok = persistPendingWrites(deduped);
-    if (!ok) return;
+    if (!ok) return false;
     logSyncEvent('enqueue', `${enriched.type} ${enriched.collection}/${enriched.id}`);
-    if (!authUser) return;
+    if (!authUser) return true;
     flushWriteQueue();
+    return true;
   };
 
   const flushWriteQueue = async () => {
@@ -871,6 +915,8 @@ const App = () => {
     if (pendingWritesRef.current.length > 0) {
       flushWriteQueue();
     }
+    // flushWriteQueue se redefine en cada render; agregarla causaria bucle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser]);
 
   useEffect(() => {
@@ -1126,6 +1172,8 @@ const App = () => {
     return () => {
       cancelled = true;
     };
+    // Hidratacion intencional solo al cambiar de usuario; resto de deps son estables.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser]);
 
   const loadMoreCollection = async (name, setter) => {
@@ -1175,6 +1223,8 @@ const App = () => {
     if (!kardexSearch.trim()) return;
     if (!collectionLoadState.transactions.hasMore || collectionLoadState.transactions.loading) return;
     loadMoreCollection('transactions', setTransactions);
+    // loadMoreCollection se redefine en cada render; incluirla causaria bucle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     authUser,
     cloudReady,
@@ -1204,6 +1254,7 @@ const App = () => {
     );
     observer.observe(target);
     return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, authUser, cloudReady, collectionLoadState]);
 
   useEffect(() => {
@@ -1231,6 +1282,7 @@ const App = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleScroll);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, authUser, cloudReady, collectionLoadState]);
 
   const handleRequestChange = (medId, value) => {
@@ -1352,10 +1404,11 @@ const App = () => {
   // Data States moved to top
 
   useEffect(() => {
+    // Trim para no saturar localStorage. Firestore es la fuente de verdad.
     const localPayload = {
-      transactions,
-      expedientes,
-      bitacora,
+      transactions: transactions.slice(0, LOCAL_CACHE_TX_LIMIT),
+      expedientes: expedientes.slice(0, LOCAL_CACHE_EXP_LIMIT),
+      bitacora: bitacora.slice(0, LOCAL_CACHE_BITACORA_LIMIT),
       medications,
       services,
       pharmacists,
@@ -1398,6 +1451,7 @@ const App = () => {
         ].slice(0, 50));
       })
       .finally(() => setDocSyncInFlight(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [medications, selectedMedId, maxRecordsLimit, cloudReady, authUser, syncError]);
 
   useEffect(() => () => {
@@ -1538,6 +1592,7 @@ const App = () => {
       }, 2000);
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions.length, cloudReady, authUser, maxRecordsLimit]);
 
   // Computations
@@ -1576,6 +1631,7 @@ const App = () => {
       const minRecommended = weeklyOut;
       return { ...med, stock, weeklyOut, minRecommended };
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, sortedMedications]);
 
   const stats = useMemo(
@@ -1710,6 +1766,7 @@ const App = () => {
     });
     const sortByDate = (a, b) => compareTransactionsDesc(a, b);
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, selectedMedId, kardexSearch]);
   const kardexBalanceById = useMemo(() => {
     const medItems = transactions
@@ -1728,6 +1785,7 @@ const App = () => {
       balanceMap[t.id] = running;
     });
     return balanceMap;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, selectedMedId]);
   const totalReponerByCierreId = useMemo(() => {
     const medItems = transactions
@@ -1737,19 +1795,23 @@ const App = () => {
     const map = {};
     const selectedMedication = medications.find((m) => m.id === selectedMedId);
     const quota = Number(selectedMedication?.quota) || 0;
-    medItems.forEach((t, idx) => {
+    medItems.forEach((t) => {
       if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
       const currentStockAtClose = Number(t.totalMedicamento) || 0;
       map[t.id] = Math.max(0, quota - currentStockAtClose);
     });
     return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, selectedMedId, medications]);
+  // pendingCount es el trigger intencional: cuando cambia, recomputamos el set
+  // a partir del ref (que no es reactivo). Es un patron deliberado.
   const pendingWriteKeySet = useMemo(() => {
     const set = new Set();
     (pendingWritesRef.current || []).forEach((w) => {
       set.add(`${w.collection}:${String(w.id)}`);
     });
     return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCount]);
   const syncMetrics = useMemo(() => {
     const counters = syncEvents.reduce(
@@ -1783,23 +1845,6 @@ const App = () => {
       approved: checks.every((c) => c.ok),
     };
   }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, backupAuditLog]);
-  const getLiveBalanceForMedication = (medId) => {
-    const medItems = transactions
-      .filter((t) => t.medId === medId)
-      .slice()
-      .sort(compareTransactionsAsc);
-    let running = 0;
-    medItems.forEach((t) => {
-      if (t.isCierre) {
-        running = Number(t.totalMedicamento) || 0;
-      } else {
-        const amount = Number(t.amount) || 0;
-        running += t.type === 'IN' ? amount : -amount;
-      }
-    });
-    return running;
-  };
-
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
   const auditoriaPageData = useMemo(() => paginate(filteredExpedientes, auditoriaPage), [filteredExpedientes, auditoriaPage]);
@@ -1846,6 +1891,7 @@ const App = () => {
       map[medId] = value.totalReponer;
     });
     return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, medications]);
   const requestInventory = useMemo(
     () =>
@@ -1892,8 +1938,12 @@ const App = () => {
         rxUsed,
         pharmacist: toUpper(formData.get('pharmacist') || pharmacists[0] || ''),
       };
+      const okKardex = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
+      if (!okKardex) {
+        notifyWriteFailed(isQuickIngreso ? 'el ingreso' : 'el rebajo');
+        return;
+      }
       setTransactions([newTransaction, ...transactions]);
-      enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
     } else if (modalType === 'kardex-edit') {
       const current = transactions.find((t) => t.id === editingTransactionId);
       const rxType = formData.get('rxType');
@@ -1935,8 +1985,12 @@ const App = () => {
         rxUsed,
         pharmacist: toUpper(formData.get('pharmacist')),
       };
+      const okKardexEdit = enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
+      if (!okKardexEdit) {
+        notifyWriteFailed('la edicion');
+        return;
+      }
       setTransactions(transactions.map((t) => (t.id === editingTransactionId ? updated : t)));
-      enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
     } else if (modalType === 'auditoria') {
       const newExp = {
         id: Date.now(),
@@ -1953,8 +2007,12 @@ const App = () => {
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
+      const okExp = enqueueWrite({ type: 'set', collection: 'expedientes', id: newExp.id, data: newExp });
+      if (!okExp) {
+        notifyWriteFailed('el expediente');
+        return;
+      }
       setExpedientes([newExp, ...expedientes]);
-      enqueueWrite({ type: 'set', collection: 'expedientes', id: newExp.id, data: newExp });
     } else if (modalType === 'auditoria-edit') {
       const current = expedientes.find((e) => e.id === editingExpedienteId);
       const updated = {
@@ -1972,8 +2030,12 @@ const App = () => {
         condicion: toUpper(formData.get('condicion')),
         farmaceutico: toUpper(formData.get('farmaceutico')),
       };
+      const okExpEdit = enqueueWrite({ type: 'set', collection: 'expedientes', id: updated.id, data: updated });
+      if (!okExpEdit) {
+        notifyWriteFailed('la edicion del expediente');
+        return;
+      }
       setExpedientes(expedientes.map((e) => (e.id === editingExpedienteId ? updated : e)));
-      enqueueWrite({ type: 'set', collection: 'expedientes', id: updated.id, data: updated });
     } else if (modalType === 'auditoria-rate-change') {
       const parent = expedientes.find((e) => e.id === editingExpedienteId);
       if (parent) {
@@ -1989,8 +2051,12 @@ const App = () => {
           condicion: 'CAMBIO VELOCIDAD INFUSION',
           farmaceutico: toUpper(formData.get('farmaceutico')),
         };
+        const okRateChg = enqueueWrite({ type: 'set', collection: 'expedientes', id: newEntry.id, data: newEntry });
+        if (!okRateChg) {
+          notifyWriteFailed('el cambio de velocidad');
+          return;
+        }
         setExpedientes([newEntry, ...expedientes]);
-        enqueueWrite({ type: 'set', collection: 'expedientes', id: newEntry.id, data: newEntry });
       }
     } else if (modalType === 'cierre') {
       if (pendingCount > 0) {
@@ -2018,8 +2084,12 @@ const App = () => {
         totalRecetas: parseInt(formData.get('totalRecetas'), 10) || 0,
         totalMedicamento: computedTotalMedicamento,
       };
+      const okCierre = enqueueWrite({ type: 'set', collection: 'transactions', id: newCierre.id, data: newCierre });
+      if (!okCierre) {
+        notifyWriteFailed('el cierre');
+        return;
+      }
       setTransactions([newCierre, ...transactions]);
-      enqueueWrite({ type: 'set', collection: 'transactions', id: newCierre.id, data: newCierre });
     } else if (modalType === 'cross-check') {
       const selectedVerifier = toUpper(formData.get('crossCheckPharmacist'));
       if (!editingTransactionId || !selectedVerifier) return;
@@ -2033,8 +2103,14 @@ const App = () => {
           : t,
       );
       const updatedTx = updatedTransactions.find((t) => t.id === editingTransactionId);
+      if (updatedTx) {
+        const okCross = enqueueWrite({ type: 'set', collection: 'transactions', id: updatedTx.id, data: updatedTx });
+        if (!okCross) {
+          notifyWriteFailed('la verificacion cruzada');
+          return;
+        }
+      }
       setTransactions(updatedTransactions);
-      if (updatedTx) enqueueWrite({ type: 'set', collection: 'transactions', id: updatedTx.id, data: updatedTx });
     } else if (modalType === 'open-rx-use') {
       if (!pendingOpenRxTransaction) return;
       const selectedPharmacist = toUpper(formData.get('openRxPharmacist'));
@@ -2064,8 +2140,12 @@ const App = () => {
         rxAdjustedBy: selectedPharmacist,
         rxAdjustedFrom: currentRxUsed,
       };
+      const okOpenRxAdj = enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
+      if (!okOpenRxAdj) {
+        notifyWriteFailed('el ajuste de receta abierta');
+        return;
+      }
       setTransactions(transactions.map((t) => (t.id === updated.id ? updated : t)));
-      enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
       setPendingOpenRxAdjustTransaction(null);
       setOpenRxAdjustValue('');
     } else if (modalType === 'auditoria-repeat') {
@@ -2087,8 +2167,12 @@ const App = () => {
         condicion: selectedCondition,
         farmaceutico: selectedPharmacist,
       };
+      const okRepeat = enqueueWrite({ type: 'set', collection: 'expedientes', id: duplicated.id, data: duplicated });
+      if (!okRepeat) {
+        notifyWriteFailed('la repeticion del expediente');
+        return;
+      }
       setExpedientes([duplicated, ...expedientes]);
-      enqueueWrite({ type: 'set', collection: 'expedientes', id: duplicated.id, data: duplicated });
       setPendingRepeatExpediente(null);
     } else if (modalType === 'bitacora') {
       const newEntry = {
@@ -2100,8 +2184,12 @@ const App = () => {
         detalle: toUpper(formData.get('detalle')),
         responsable: toUpper(formData.get('responsable')),
       };
+      const okBitacora = enqueueWrite({ type: 'set', collection: 'bitacora', id: newEntry.id, data: newEntry });
+      if (!okBitacora) {
+        notifyWriteFailed('la entrada de bitacora');
+        return;
+      }
       setBitacora([newEntry, ...bitacora]);
-      enqueueWrite({ type: 'set', collection: 'bitacora', id: newEntry.id, data: newEntry });
     } else if (modalType === 'med-add') {
       const newId = `med-${Date.now()}`;
       const newMed = {
@@ -2125,33 +2213,45 @@ const App = () => {
     } else if (modalType === 'service-add') {
       const newService = toUpper(formData.get('serviceName'));
       const nextServices = [newService, ...services.filter((s) => s !== newService)];
-      setServices(nextServices);
-      enqueueWrite({
+      const okSvc = enqueueWrite({
         type: 'set',
         collection: 'catalog_services',
         id: toCatalogId(newService),
         data: { id: toCatalogId(newService), name: newService, createdAt: Date.now() },
       });
+      if (!okSvc) {
+        notifyWriteFailed('el servicio');
+        return;
+      }
+      setServices(nextServices);
     } else if (modalType === 'pharmacist-add') {
       const newPharmacist = toUpper(formData.get('pharmacistName'));
       const nextPharmacists = [newPharmacist, ...pharmacists.filter((p) => p !== newPharmacist)];
-      setPharmacists(nextPharmacists);
-      enqueueWrite({
+      const okPharm = enqueueWrite({
         type: 'set',
         collection: 'catalog_pharmacists',
         id: toCatalogId(newPharmacist),
         data: { id: toCatalogId(newPharmacist), name: newPharmacist, createdAt: Date.now() },
       });
+      if (!okPharm) {
+        notifyWriteFailed('el farmaceutico');
+        return;
+      }
+      setPharmacists(nextPharmacists);
     } else if (modalType === 'condition-add') {
       const newCondition = toUpper(formData.get('conditionName'));
       const nextCondiciones = [newCondition, ...condiciones.filter((c) => c !== newCondition)];
-      setCondiciones(nextCondiciones);
-      enqueueWrite({
+      const okCond = enqueueWrite({
         type: 'set',
         collection: 'catalog_condiciones',
         id: toCatalogId(newCondition),
         data: { id: toCatalogId(newCondition), name: newCondition, createdAt: Date.now() },
       });
+      if (!okCond) {
+        notifyWriteFailed('la condicion');
+        return;
+      }
+      setCondiciones(nextCondiciones);
     } else if (modalType === 'reintegro') {
       const rxQuantity = 0;
       const rxType = 'CERRADA';
@@ -2175,8 +2275,12 @@ const App = () => {
         rxUsed: 0,
         pharmacist: toUpper(formData.get('farmaceutico') || pharmacists[0] || ''),
       };
+      const okReint = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
+      if (!okReint) {
+        notifyWriteFailed('el reintegro');
+        return;
+      }
       setTransactions([newTransaction, ...transactions]);
-      enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
     }
     setShowModal(false);
     setEditingMedId(null);
@@ -2277,6 +2381,43 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans text-slate-900 overflow-hidden">
+      {writeBlockedByStorage && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-rose-600 text-white px-4 py-3 shadow-lg border-b-2 border-rose-800">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <div className="flex-1">
+              <p className="text-sm font-bold uppercase tracking-wider">
+                ESCRITURAS BLOQUEADAS - Almacenamiento local sin espacio
+              </p>
+              <p className="text-xs mt-0.5 opacity-90">
+                Los nuevos rebajos/ingresos NO se estan guardando. Sincronice pendientes o libere espacio antes de continuar.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof flushWriteQueue === 'function') flushWriteQueue();
+                }}
+                className="bg-white text-rose-700 px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider hover:bg-rose-50"
+              >
+                Reintentar Sincronizacion
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try { localStorage.removeItem('pharmaControlData'); } catch { /* noop */ }
+                  setWriteBlockedByStorage(false);
+                  setSyncError('');
+                  logSyncEvent('manual_unblock', 'Cache local purgado por usuario.');
+                }}
+                className="bg-rose-900 text-white px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider hover:bg-rose-950"
+              >
+                Liberar Cache Local
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Sidebar - Clean & Professional */}
       <nav className="w-full md:w-64 bg-slate-900 border-r border-slate-800 shrink-0 flex flex-col z-20">
         <div className="p-8">
@@ -2933,8 +3074,12 @@ const App = () => {
                             onClick={() => {
                               requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
                                 if (!confirmDelete) return;
+                                const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                if (!okDel) {
+                                  notifyWriteFailed('la eliminacion');
+                                  return;
+                                }
                                 setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
                               });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
@@ -3135,8 +3280,12 @@ const App = () => {
                               onClick={() => {
                                 requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
                                   if (!confirmDelete) return;
+                                  const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                  if (!okDel) {
+                                    notifyWriteFailed('la eliminacion');
+                                    return;
+                                  }
                                   setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                  enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
                                 });
                               }}
                               className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
@@ -3282,8 +3431,12 @@ const App = () => {
                               `Eliminar expediente de ${e.cedula} (${e.medicamento}) - Receta ${e.receta || '---'}?`,
                             );
                             if (!confirmDelete) return;
+                            const okDel = enqueueWrite({ type: 'delete', collection: 'expedientes', id: e.id });
+                            if (!okDel) {
+                              notifyWriteFailed('la eliminacion del expediente');
+                              return;
+                            }
                             setExpedientes(expedientes.filter((exp) => exp.id !== e.id));
-                            enqueueWrite({ type: 'delete', collection: 'expedientes', id: e.id });
                           }}
                           className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                         >
@@ -4285,8 +4438,12 @@ const App = () => {
                             onClick={() => {
                               const confirmDelete = window.confirm(`Eliminar servicio: ${name}?`);
                               if (!confirmDelete) return;
+                              const okDel = enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
+                              if (!okDel) {
+                                notifyWriteFailed('la eliminacion del servicio');
+                                return;
+                              }
                               setServices(services.filter((s) => s !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_services', id: toCatalogId(name) });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
@@ -4327,8 +4484,12 @@ const App = () => {
                             onClick={() => {
                               const confirmDelete = window.confirm(`Eliminar farmaceutico: ${name}?`);
                               if (!confirmDelete) return;
+                              const okDel = enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
+                              if (!okDel) {
+                                notifyWriteFailed('la eliminacion del farmaceutico');
+                                return;
+                              }
                               setPharmacists(pharmacists.filter((p) => p !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_pharmacists', id: toCatalogId(name) });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
@@ -4365,8 +4526,12 @@ const App = () => {
                             onClick={() => {
                               const confirmDelete = window.confirm(`Eliminar condicion: ${name}?`);
                               if (!confirmDelete) return;
+                              const okDel = enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
+                              if (!okDel) {
+                                notifyWriteFailed('la eliminacion de la condicion');
+                                return;
+                              }
                               setCondiciones(condiciones.filter((c) => c !== name));
-                              enqueueWrite({ type: 'delete', collection: 'catalog_condiciones', id: toCatalogId(name) });
                             }}
                             className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                           >
