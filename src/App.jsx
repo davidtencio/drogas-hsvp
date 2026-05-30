@@ -600,9 +600,13 @@ const App = () => {
   };
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const getTransactionTimestamp = (t) => {
+    // createdAt es preciso a milisegundos; t.date solo a minutos. Priorizar
+    // createdAt evita empates entre un cierre y un movimiento del mismo minuto
+    // (que antes quedaban excluidos del inventario por el filtro > closeTime) y
+    // mantiene el saldo del Kardex igual al encabezado.
+    if (Number.isFinite(t?.createdAt)) return t.createdAt;
     const fromDate = parseDateTime(t?.date)?.getTime();
     if (Number.isFinite(fromDate)) return fromDate;
-    if (Number.isFinite(t?.createdAt)) return t.createdAt;
     return 0;
   };
   const compareTransactionsAsc = (a, b) => {
@@ -1971,7 +1975,9 @@ const App = () => {
               );
       const updated = {
         id: editingTransactionId,
-        date: now,
+        // Conservar la fecha original: editar el contenido de un movimiento no
+        // debe moverlo a otro periodo ni cambiar la fecha mostrada en el Kardex.
+        date: current?.date || now,
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId,
         type: current?.type === 'IN' ? 'IN' : 'OUT',
