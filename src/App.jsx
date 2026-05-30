@@ -1505,9 +1505,14 @@ const App = () => {
       document.body.removeChild(link);
 
       // 2. Calculate Carry-Over Stocks
+      // Usar el MISMO stock que muestra el inventario (currentInventory), que parte
+      // de la ultima ancla de saldo (cierres y ajustes manuales) y suma los
+      // movimientos posteriores. Recalcular desde cero ignorando las anclas
+      // descuadraria el saldo de arrastre cuando existe un ajuste manual o un
+      // cierre cuyo totalMedicamento no es la suma pura de entradas-salidas.
+      const stockByMedId = new Map(currentInventory.map((m) => [m.id, m.stock]));
       const carryOverTransactions = sortedMedications.map(med => {
-        const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
-        const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
+        const stock = Number(stockByMedId.get(med.id)) || 0;
 
         if (stock <= 0) return null;
 
