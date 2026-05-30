@@ -129,6 +129,7 @@ const App = () => {
   const [securityPromptValue, setSecurityPromptValue] = useState('');
   const [confirmPromptOpen, setConfirmPromptOpen] = useState(false);
   const [confirmPromptMessage, setConfirmPromptMessage] = useState('');
+  const [observationView, setObservationView] = useState(null);
   const securityPromptResolverRef = useRef(null);
   const confirmPromptResolverRef = useRef(null);
   const [requestQuantities, setRequestQuantities] = useState({});
@@ -1963,6 +1964,7 @@ const App = () => {
         rxType,
         rxQuantity,
         rxUsed,
+        observacion: isQuickIngreso ? '' : toUpper(formData.get('observacion')),
         pharmacist: toUpper(formData.get('pharmacist') || pharmacists[0] || ''),
       };
       const okKardex = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
@@ -2012,6 +2014,7 @@ const App = () => {
         rxType,
         rxQuantity,
         rxUsed,
+        observacion: toUpper(formData.get('observacion')),
         pharmacist: toUpper(formData.get('pharmacist')),
       };
       const okKardexEdit = enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
@@ -3051,7 +3054,20 @@ const App = () => {
                       </td>
                       <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
                         <div className="flex flex-col items-center">
-                          <span>{t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}</span>
+                          <span className="inline-flex items-center gap-1">
+                            {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                            {!t.isCierre && t.observacion && (
+                              <button
+                                type="button"
+                                onClick={() => setObservationView(t)}
+                                title={t.observacion}
+                                aria-label="Ver observacion"
+                                className="text-amber-500 hover:text-amber-600"
+                              >
+                                <FileText size={13} />
+                              </button>
+                            )}
+                          </span>
                           {!t.isCierre && t.dosis && (
                             <span className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t.dosis}</span>
                           )}
@@ -3261,7 +3277,20 @@ const App = () => {
                           )}
                         </td>
                         <td className="px-6 py-4 font-mono text-xs text-blue-600 text-center">
-                          {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                          <span className="inline-flex items-center gap-1">
+                            {t.isCierre ? `RECETAS: ${t.totalRecetas}` : t.prescription || '---'}
+                            {!t.isCierre && t.observacion && (
+                              <button
+                                type="button"
+                                onClick={() => setObservationView(t)}
+                                title={t.observacion}
+                                aria-label="Ver observacion"
+                                className="text-amber-500 hover:text-amber-600"
+                              >
+                                <FileText size={13} />
+                              </button>
+                            )}
+                          </span>
                         </td>
                       <td className="px-6 py-4">
                           <div className="flex gap-2 justify-center items-center min-w-[150px] mx-auto">
@@ -3932,6 +3961,32 @@ const App = () => {
           </div>
         </div>
       )}
+      {observationView && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+              <FileText size={16} className="text-amber-500" />
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Observacion</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-slate-700 whitespace-pre-wrap">{observationView.observacion}</p>
+              <div className="border-t border-slate-100 pt-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Registrado por</p>
+                <p className="text-xs font-bold text-slate-700 mt-0.5">{observationView.pharmacist || 'N/A'}</p>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setObservationView(null)}
+                  className="bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-800"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Simplified Modal */}
       {showModal && (
@@ -4375,6 +4430,17 @@ const App = () => {
                         name="prescription"
                         defaultValue={transactions.find((t) => t.id === editingTransactionId)?.prescription || ''}
                       />
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Observaciones (opcional)</label>
+                        <textarea
+                          name="observacion"
+                          rows={2}
+                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.observacion || ''}
+                          placeholder="Notas adicionales sobre este movimiento..."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium uppercase resize-none"
+                        />
+                      </div>
 
                       <SelectLabel
                         label="Farmaceutico"
