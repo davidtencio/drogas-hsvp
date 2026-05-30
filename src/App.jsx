@@ -705,10 +705,12 @@ const App = () => {
     return true;
   };
 
-  const handleOpenRxUse = (transaction, overridePharmacist, overrideAmount) => {
+  const handleOpenRxUse = async (transaction, overridePharmacist, overrideAmount) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
+    const proceed = await confirmIfNegativeStock(transaction.medId, amountToUse);
+    if (!proceed) return;
     const nextUsed = nextOpenRxUse(
       transactions,
       transaction.medId,
@@ -1910,7 +1912,19 @@ const App = () => {
       })),
     [currentInventory, totalReponerByMedId],
   );
-  const handleSave = (e) => {
+  // Opcion B (#5): no bloquear el egreso, pero advertir si deja el saldo en
+  // negativo. La confirmacion solo aparece cuando amount > stock disponible,
+  // para no generar fatiga de clics en los rebajos normales.
+  const confirmIfNegativeStock = async (medId, amount) => {
+    const available = Number(currentInventory.find((m) => m.id === medId)?.stock) || 0;
+    if (amount <= available) return true;
+    const medName = medications.find((m) => m.id === medId)?.name || medId;
+    return requestStyledConfirm(
+      `Esta salida deja ${medName} en ${available - amount} (saldo actual ${available}, salida ${amount}). ¿Desea continuar?`,
+    );
+  };
+
+  const handleSave = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
     const now = new Date().toLocaleString('es-CR', {
@@ -1931,6 +1945,10 @@ const App = () => {
       const prescription = isQuickIngreso ? '' : toUpper(formData.get('prescription'));
       const rxUsed =
         rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity, amount) : 0;
+      if (!isQuickIngreso) {
+        const proceed = await confirmIfNegativeStock(medId, amount);
+        if (!proceed) return;
+      }
       const newTransaction = {
         id: Date.now(),
         date: now,
@@ -2128,7 +2146,7 @@ const App = () => {
       const selectedAmount = parseInt(formData.get('openRxAmount'), 10);
       if (!selectedPharmacist) return;
       if (!Number.isFinite(selectedAmount) || selectedAmount <= 0) return;
-      handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
+      await handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
       setPendingOpenRxTransaction(null);
       setOpenRxAmountValue('');
     } else if (modalType === 'open-rx-adjust') {
