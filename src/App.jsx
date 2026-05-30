@@ -44,7 +44,7 @@ const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
 const CR_TIMEZONE = 'America/Costa_Rica';
 const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 10);
-const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 20000;
+const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 40000;
 const INITIAL_CLOUD_LOAD = 200;
 const LOAD_MORE_BATCH_SIZE = 200;
 const SOFT_MEMORY_CAP_MULTIPLIER = 5;
@@ -600,9 +600,13 @@ const App = () => {
   };
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const getTransactionTimestamp = (t) => {
+    // createdAt es preciso a milisegundos; t.date solo a minutos. Priorizar
+    // createdAt evita empates entre un cierre y un movimiento del mismo minuto
+    // (que antes quedaban excluidos del inventario por el filtro > closeTime) y
+    // mantiene el saldo del Kardex igual al encabezado.
+    if (Number.isFinite(t?.createdAt)) return t.createdAt;
     const fromDate = parseDateTime(t?.date)?.getTime();
     if (Number.isFinite(fromDate)) return fromDate;
-    if (Number.isFinite(t?.createdAt)) return t.createdAt;
     return 0;
   };
   const compareTransactionsAsc = (a, b) => {
@@ -701,10 +705,12 @@ const App = () => {
     return true;
   };
 
-  const handleOpenRxUse = (transaction, overridePharmacist, overrideAmount) => {
+  const handleOpenRxUse = async (transaction, overridePharmacist, overrideAmount) => {
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
+    const proceed = await confirmIfNegativeStock(transaction.medId, amountToUse);
+    if (!proceed) return;
     const nextUsed = nextOpenRxUse(
       transactions,
       transaction.medId,
@@ -1501,9 +1507,14 @@ const App = () => {
       document.body.removeChild(link);
 
       // 2. Calculate Carry-Over Stocks
+      // Usar el MISMO stock que muestra el inventario (currentInventory), que parte
+      // de la ultima ancla de saldo (cierres y ajustes manuales) y suma los
+      // movimientos posteriores. Recalcular desde cero ignorando las anclas
+      // descuadraria el saldo de arrastre cuando existe un ajuste manual o un
+      // cierre cuyo totalMedicamento no es la suma pura de entradas-salidas.
+      const stockByMedId = new Map(currentInventory.map((m) => [m.id, m.stock]));
       const carryOverTransactions = sortedMedications.map(med => {
-        const medTransactions = transactions.filter((t) => t.medId === med.id && !t.isCierre);
-        const stock = medTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), 0);
+        const stock = Number(stockByMedId.get(med.id)) || 0;
 
         if (stock <= 0) return null;
 
@@ -1901,7 +1912,19 @@ const App = () => {
       })),
     [currentInventory, totalReponerByMedId],
   );
-  const handleSave = (e) => {
+  // Opcion B (#5): no bloquear el egreso, pero advertir si deja el saldo en
+  // negativo. La confirmacion solo aparece cuando amount > stock disponible,
+  // para no generar fatiga de clics en los rebajos normales.
+  const confirmIfNegativeStock = async (medId, amount) => {
+    const available = Number(currentInventory.find((m) => m.id === medId)?.stock) || 0;
+    if (amount <= available) return true;
+    const medName = medications.find((m) => m.id === medId)?.name || medId;
+    return requestStyledConfirm(
+      `Esta salida deja ${medName} en ${available - amount} (saldo actual ${available}, salida ${amount}). ¿Desea continuar?`,
+    );
+  };
+
+  const handleSave = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
     const now = new Date().toLocaleString('es-CR', {
@@ -1922,6 +1945,10 @@ const App = () => {
       const prescription = isQuickIngreso ? '' : toUpper(formData.get('prescription'));
       const rxUsed =
         rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity, amount) : 0;
+      if (!isQuickIngreso) {
+        const proceed = await confirmIfNegativeStock(medId, amount);
+        if (!proceed) return;
+      }
       const newTransaction = {
         id: Date.now(),
         date: now,
@@ -1971,7 +1998,9 @@ const App = () => {
               );
       const updated = {
         id: editingTransactionId,
-        date: now,
+        // Conservar la fecha original: editar el contenido de un movimiento no
+        // debe moverlo a otro periodo ni cambiar la fecha mostrada en el Kardex.
+        date: current?.date || now,
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId,
         type: current?.type === 'IN' ? 'IN' : 'OUT',
@@ -2117,7 +2146,7 @@ const App = () => {
       const selectedAmount = parseInt(formData.get('openRxAmount'), 10);
       if (!selectedPharmacist) return;
       if (!Number.isFinite(selectedAmount) || selectedAmount <= 0) return;
-      handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
+      await handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
       setPendingOpenRxTransaction(null);
       setOpenRxAmountValue('');
     } else if (modalType === 'open-rx-adjust') {
