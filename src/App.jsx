@@ -26,6 +26,15 @@ import {
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
+import {
+  parseDateTime,
+  getTransactionTimestamp,
+  compareTransactionsAsc,
+  compareTransactionsDesc,
+  getLastBalanceAnchor,
+  formatCurrency,
+  parseCurrency,
+} from './utils/inventory';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -213,18 +222,6 @@ const App = () => {
       totalPages,
       items: items.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE),
     };
-  };
-  const formatCurrency = (value) => {
-    const num = Number(value);
-    if (!Number.isFinite(num)) return '';
-    return num.toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-  const parseCurrency = (value) => {
-    if (value === null || value === undefined) return 0;
-    const cleaned = value.toString().replace(/\s/g, '');
-    const normalized = cleaned.replace(/\./g, '').replace(',', '.');
-    const num = parseFloat(normalized);
-    return Number.isFinite(num) ? num : 0;
   };
   const parseInfusionDose = (dosis) => {
     const text = (dosis || '').toString();
@@ -580,56 +577,7 @@ const App = () => {
     return Number.isFinite(Number(latest?.amount)) ? Number(latest.amount) : Number(transaction.amount) || 0;
   };
 
-  const parseDateTime = (value) => {
-    if (!value) return null;
-    const cleaned = value
-      .replace(',', '')
-      .replace(/\s*a\.\s*m\.\s*$/i, ' AM')
-      .replace(/\s*p\.\s*m\.\s*$/i, ' PM')
-      .trim();
-    const parts = cleaned.split(/\s+/);
-    const datePart = parts[0];
-    const timePart = parts[1] || '';
-    const ampm = (parts[2] || '').toUpperCase();
-    if (!datePart) return null;
-    const [day, month, year] = datePart.split('/').map(Number);
-    if (!day || !month || !year) return null;
-    let [hour = 0, minute = 0] = (timePart || '').split(':').map(Number);
-    if (ampm === 'PM' && hour < 12) hour += 12;
-    if (ampm === 'AM' && hour === 12) hour = 0;
-    return new Date(year, month - 1, day, hour, minute);
-  };
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const getTransactionTimestamp = (t) => {
-    // createdAt es preciso a milisegundos; t.date solo a minutos. Priorizar
-    // createdAt evita empates entre un cierre y un movimiento del mismo minuto
-    // (que antes quedaban excluidos del inventario por el filtro > closeTime) y
-    // mantiene el saldo del Kardex igual al encabezado.
-    if (Number.isFinite(t?.createdAt)) return t.createdAt;
-    const fromDate = parseDateTime(t?.date)?.getTime();
-    if (Number.isFinite(fromDate)) return fromDate;
-    return 0;
-  };
-  const compareTransactionsAsc = (a, b) => {
-    const aDate = getTransactionTimestamp(a);
-    const bDate = getTransactionTimestamp(b);
-    if (aDate !== bDate) return aDate - bDate;
-    const aCreated = Number.isFinite(a?.createdAt) ? a.createdAt : 0;
-    const bCreated = Number.isFinite(b?.createdAt) ? b.createdAt : 0;
-    if (aCreated !== bCreated) return aCreated - bCreated;
-    const aId = Number(a?.id) || 0;
-    const bId = Number(b?.id) || 0;
-    return aId - bId;
-  };
-  const compareTransactionsDesc = (a, b) => compareTransactionsAsc(b, a);
-  const getLastBalanceAnchor = (items, medId) =>
-    items
-      .filter(
-        (t) =>
-          t.medId === medId &&
-          t.isCierre,
-      )
-      .sort(compareTransactionsDesc)[0];
   const isQuotaExceededError = (error) =>
     error &&
     (QUOTA_EXCEEDED_ERRORS.includes(error.name) ||
@@ -1643,7 +1591,7 @@ const App = () => {
       const minRecommended = weeklyOut;
       return { ...med, stock, weeklyOut, minRecommended };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, sortedMedications]);
 
   const stats = useMemo(
@@ -1778,7 +1726,7 @@ const App = () => {
     });
     const sortByDate = (a, b) => compareTransactionsDesc(a, b);
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, selectedMedId, kardexSearch]);
   const kardexBalanceById = useMemo(() => {
     const medItems = transactions
@@ -1797,7 +1745,7 @@ const App = () => {
       balanceMap[t.id] = running;
     });
     return balanceMap;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, selectedMedId]);
   // Progreso "X de Y" de recetas ABIERTAS precalculado en una sola pasada.
   // Antes se computaba por fila con un filter+sort sobre todas las transacciones
@@ -1832,7 +1780,7 @@ const App = () => {
       });
     });
     return progressMap;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, selectedMedId]);
   const totalReponerByCierreId = useMemo(() => {
     const medItems = transactions
@@ -1848,7 +1796,7 @@ const App = () => {
       map[t.id] = Math.max(0, quota - currentStockAtClose);
     });
     return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, selectedMedId, medications]);
   // pendingCount es el trigger intencional: cuando cambia, recomputamos el set
   // a partir del ref (que no es reactivo). Es un patron deliberado.
@@ -1938,7 +1886,7 @@ const App = () => {
       map[medId] = value.totalReponer;
     });
     return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [transactions, medications]);
   const requestInventory = useMemo(
     () =>
