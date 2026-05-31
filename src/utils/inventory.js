@@ -74,6 +74,23 @@ export const computeMedStock = (transactions, medId) => {
   );
 };
 
+// Progreso de uso de una receta ABIERTA: dado el conjunto de movimientos,
+// calcula cuanto quedaria usado tras agregar `amountToAdd`, sin exceder rxQuantity.
+export const nextOpenRxUse = (items, medId, prescription, rxQuantity, amountToAdd = 1) => {
+  const matches = items.filter(
+    (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
+  );
+  const safeAmount = Math.max(0, Number(amountToAdd) || 0);
+  if (matches.length === 0) return Math.min(safeAmount, rxQuantity);
+  const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
+  return Math.min(maxUsed + safeAmount, rxQuantity);
+};
+
+// Cantidad a reponer para alcanzar la cuota, dado el stock al cierre.
+// Nunca negativa (si el stock supera la cuota, no hay que reponer).
+export const computeTotalReponer = (quota, currentStockAtClose) =>
+  Math.max(0, (Number(quota) || 0) - (Number(currentStockAtClose) || 0));
+
 export const formatCurrency = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return '';

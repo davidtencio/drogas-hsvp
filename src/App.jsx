@@ -32,6 +32,8 @@ import {
   compareTransactionsAsc,
   compareTransactionsDesc,
   getLastBalanceAnchor,
+  nextOpenRxUse,
+  computeTotalReponer,
   formatCurrency,
   parseCurrency,
 } from './utils/inventory';
@@ -553,15 +555,6 @@ const App = () => {
     return `${used} de ${t.rxQuantity}`;
   };
 
-  const nextOpenRxUse = (items, medId, prescription, rxQuantity, amountToAdd = 1) => {
-    const matches = items.filter(
-      (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
-    );
-    const safeAmount = Math.max(0, Number(amountToAdd) || 0);
-    if (matches.length === 0) return Math.min(safeAmount, rxQuantity);
-    const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
-    return Math.min(maxUsed + safeAmount, rxQuantity);
-  };
   const getCurrentOpenRxAmount = (items, transaction) => {
     const matches = items
       .filter(
@@ -1793,7 +1786,7 @@ const App = () => {
     medItems.forEach((t) => {
       if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
       const currentStockAtClose = Number(t.totalMedicamento) || 0;
-      map[t.id] = Math.max(0, quota - currentStockAtClose);
+      map[t.id] = computeTotalReponer(quota, currentStockAtClose);
     });
     return map;
      
@@ -1875,7 +1868,7 @@ const App = () => {
       const ts = getTransactionTimestamp(t);
       const quota = quotaByMedId.get(medId) || 0;
       const currentStockAtClose = Number(t.totalMedicamento) || 0;
-      const totalReponer = Math.max(0, quota - currentStockAtClose);
+      const totalReponer = computeTotalReponer(quota, currentStockAtClose);
       const prev = latestByMedId.get(medId);
       if (!prev || ts >= prev.ts) {
         latestByMedId.set(medId, { ts, totalReponer });
