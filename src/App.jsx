@@ -1799,6 +1799,41 @@ const App = () => {
     return balanceMap;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, selectedMedId]);
+  // Progreso "X de Y" de recetas ABIERTAS precalculado en una sola pasada.
+  // Antes se computaba por fila con un filter+sort sobre todas las transacciones
+  // (O(n^2) en el render del Kardex); ahora se agrupa una vez por (receta, cantidad).
+  const rxProgressById = useMemo(() => {
+    const groups = new Map();
+    transactions
+      .filter(
+        (t) =>
+          t.medId === selectedMedId &&
+          t.type === 'OUT' &&
+          t.rxType === 'ABIERTA',
+      )
+      .slice()
+      .sort(compareTransactionsAsc)
+      .forEach((t) => {
+        const key = `${t.prescription}|${t.rxQuantity}`;
+        const group = groups.get(key) || [];
+        group.push(t);
+        groups.set(key, group);
+      });
+    const progressMap = {};
+    groups.forEach((items) => {
+      let used = 0;
+      items.forEach((t) => {
+        used += Number(t.amount) || 0;
+        if (t.rxAdjusted) {
+          used = Number(t.rxUsed) || used;
+        }
+        const capped = Math.min(used, Number(t.rxQuantity) || 0);
+        progressMap[t.id] = `${capped} de ${t.rxQuantity}`;
+      });
+    });
+    return progressMap;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions, selectedMedId]);
   const totalReponerByCierreId = useMemo(() => {
     const medItems = transactions
       .filter((t) => t.medId === selectedMedId)
@@ -3045,7 +3080,7 @@ const App = () => {
                           >
                             <span className="inline-flex items-center gap-1">
                               {t.rxAdjusted && <span className="text-rose-600 text-[10px]" title={`Ajustado por ${t.rxAdjustedBy || 'N/A'}: ${t.rxAdjustedFrom ?? 0} -> ${t.rxUsed ?? 0} (${t.rxAdjustedAt || 'sin fecha'})`}>▲</span>}
-                              {getRxProgress(t)}
+                              {rxProgressById[t.id] ?? getRxProgress(t)}
                             </span>
                           </button>
                         ) : (
@@ -3269,7 +3304,7 @@ const App = () => {
                             >
                               <span className="inline-flex items-center gap-1">
                                 {t.rxAdjusted && <span className="text-rose-600 text-[10px]" title={`Ajustado por ${t.rxAdjustedBy || 'N/A'}: ${t.rxAdjustedFrom ?? 0} -> ${t.rxUsed ?? 0} (${t.rxAdjustedAt || 'sin fecha'})`}>▲</span>}
-                                {getRxProgress(t)}
+                                {rxProgressById[t.id] ?? getRxProgress(t)}
                               </span>
                             </button>
                           ) : (
