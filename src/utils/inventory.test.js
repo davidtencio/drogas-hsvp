@@ -5,6 +5,8 @@ import {
   compareTransactionsAsc,
   getLastBalanceAnchor,
   computeMedStock,
+  nextOpenRxUse,
+  computeTotalReponer,
   formatCurrency,
   parseCurrency,
 } from './inventory';
@@ -115,6 +117,48 @@ describe('computeMedStock', () => {
       { medId: 'm', type: 'OUT', amount: 5, createdAt: 2 },
     ];
     expect(computeMedStock(txs, 'm')).toBe(-2);
+  });
+});
+
+describe('nextOpenRxUse (recetas abiertas)', () => {
+  const rx = (rxUsed) => ({ medId: 'm', rxType: 'ABIERTA', prescription: 'R1', rxQuantity: 30, rxUsed });
+
+  it('sin movimientos previos, devuelve el monto a agregar (tope rxQuantity)', () => {
+    expect(nextOpenRxUse([], 'm', 'R1', 30, 4)).toBe(4);
+    expect(nextOpenRxUse([], 'm', 'R1', 30, 50)).toBe(30); // no excede la cantidad
+  });
+
+  it('acumula sobre el maximo rxUsed existente', () => {
+    const items = [rx(4), rx(8)];
+    expect(nextOpenRxUse(items, 'm', 'R1', 30, 4)).toBe(12); // 8 + 4
+  });
+
+  it('nunca excede rxQuantity', () => {
+    const items = [rx(28)];
+    expect(nextOpenRxUse(items, 'm', 'R1', 30, 10)).toBe(30); // 28 + 10 -> tope 30
+  });
+
+  it('solo considera la misma receta y cantidad', () => {
+    const items = [
+      { medId: 'm', rxType: 'ABIERTA', prescription: 'OTRA', rxQuantity: 30, rxUsed: 20 },
+      { medId: 'm', rxType: 'ABIERTA', prescription: 'R1', rxQuantity: 99, rxUsed: 15 },
+    ];
+    expect(nextOpenRxUse(items, 'm', 'R1', 30, 2)).toBe(2); // ninguna coincide con (R1,30)
+  });
+});
+
+describe('computeTotalReponer', () => {
+  it('devuelve la diferencia entre cuota y stock al cierre', () => {
+    expect(computeTotalReponer(100, 60)).toBe(40);
+  });
+
+  it('nunca es negativo si el stock supera la cuota', () => {
+    expect(computeTotalReponer(100, 120)).toBe(0);
+  });
+
+  it('trata valores no numericos como 0', () => {
+    expect(computeTotalReponer(undefined, 10)).toBe(0);
+    expect(computeTotalReponer(50, undefined)).toBe(50);
   });
 });
 
