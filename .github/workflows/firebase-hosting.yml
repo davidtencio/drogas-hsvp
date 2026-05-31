@@ -47,6 +47,7 @@ jobs:
             exit 1
           fi
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
