@@ -29,6 +29,7 @@ import {
 import {
   parseDateTime,
   getTransactionTimestamp,
+  getDisplayTimestamp,
   compareTransactionsAsc,
   compareTransactionsDesc,
   getLastBalanceAnchor,
@@ -1710,7 +1711,11 @@ const App = () => {
     const recent = [];
     const historic = [];
     medTransactions.forEach((t) => {
-      const whenTs = getTransactionTimestamp(t);
+      // Clasificacion por fecha MOSTRADA (date), no por createdAt: un movimiento
+      // con fecha visible reciente no debe quedar oculto en el historico aunque
+      // su createdAt este desfasado. El orden dentro de cada tabla y el calculo
+      // de saldo siguen usando createdAt (compareTransactionsDesc / kardexBalanceById).
+      const whenTs = getDisplayTimestamp(t);
       if (whenTs >= cutoff.getTime()) {
         recent.push(t);
       } else {

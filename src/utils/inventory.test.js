@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseDateTime,
   getTransactionTimestamp,
+  getDisplayTimestamp,
   compareTransactionsAsc,
   getLastBalanceAnchor,
   computeMedStock,
@@ -46,6 +47,36 @@ describe('getTransactionTimestamp (#1)', () => {
 
   it('devuelve 0 cuando no hay ni createdAt ni date', () => {
     expect(getTransactionTimestamp({})).toBe(0);
+  });
+});
+
+describe('getDisplayTimestamp (clasificacion visual Kardex)', () => {
+  it('prioriza la fecha mostrada (date) sobre createdAt', () => {
+    // date reciente, createdAt viejo: debe clasificar por date (reciente)
+    const t = { date: '27/08/2025 1:34 PM', createdAt: 100 };
+    expect(getDisplayTimestamp(t)).toBe(parseDateTime('27/08/2025 1:34 PM').getTime());
+  });
+
+  it('cae a createdAt cuando date no es parseable', () => {
+    const t = { date: 'texto invalido', createdAt: 1700000000123 };
+    expect(getDisplayTimestamp(t)).toBe(1700000000123);
+  });
+
+  it('devuelve 0 cuando no hay ni date valido ni createdAt', () => {
+    expect(getDisplayTimestamp({})).toBe(0);
+    expect(getDisplayTimestamp({ date: '' })).toBe(0);
+  });
+
+  it('un movimiento con date reciente queda del lado reciente del corte de 7 dias', () => {
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 7);
+    const recientes = new Date();
+    recientes.setDate(recientes.getDate() - 2);
+    const d = `${recientes.getDate()}/${recientes.getMonth() + 1}/${recientes.getFullYear()} 10:00 AM`;
+    // date de hace 2 dias pero createdAt desfasado a hace mucho
+    const t = { date: d, createdAt: 1 };
+    expect(getDisplayTimestamp(t)).toBeGreaterThanOrEqual(cutoff.getTime());
   });
 });
 

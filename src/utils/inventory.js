@@ -49,6 +49,20 @@ export const compareTransactionsAsc = (a, b) => {
 
 export const compareTransactionsDesc = (a, b) => compareTransactionsAsc(b, a);
 
+// Timestamp para la CLASIFICACION VISUAL del Kardex (ventana "Recientes" vs
+// "Historico anteriores a 7 dias"). A diferencia de getTransactionTimestamp
+// (que prioriza createdAt para ORDEN y CALCULO de saldo), aqui priorizamos la
+// fecha MOSTRADA `date`. Asi un movimiento con fecha visible reciente nunca cae
+// al historico oculto aunque su createdAt haya quedado desfasado respecto a
+// `date` (registros viejos editados con la version antigua). No usar para
+// ordenar ni para calcular stock: solo para decidir en que tabla se muestra.
+export const getDisplayTimestamp = (t) => {
+  const fromDate = parseDateTime(t?.date)?.getTime();
+  if (Number.isFinite(fromDate)) return fromDate;
+  if (Number.isFinite(t?.createdAt)) return t.createdAt;
+  return 0;
+};
+
 // Ultima ancla de saldo (cierre o ajuste manual) de un medicamento.
 export const getLastBalanceAnchor = (items, medId) =>
   items
