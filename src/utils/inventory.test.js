@@ -5,6 +5,7 @@ import {
   getDisplayTimestamp,
   compareTransactionsAsc,
   getLastBalanceAnchor,
+  mergeTransactionsById,
   computeMedStock,
   nextOpenRxUse,
   computeTotalReponer,
@@ -108,6 +109,34 @@ describe('getLastBalanceAnchor', () => {
   it('ignora anclas de otros medicamentos', () => {
     const txs = [{ id: 1, medId: 'otro', isCierre: true, createdAt: 100 }];
     expect(getLastBalanceAnchor(txs, 'm')).toBeUndefined();
+  });
+});
+
+describe('mergeTransactionsById', () => {
+  it('agrega los nuevos sin duplicar por id', () => {
+    const prev = [{ id: 1, a: 1 }, { id: 2, a: 2 }];
+    const incoming = [{ id: 3, a: 3 }];
+    const merged = mergeTransactionsById(prev, incoming);
+    expect(merged.map((t) => t.id).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('el id repetido lo gana incoming (dato mas fresco)', () => {
+    const prev = [{ id: 1, amount: 2 }];
+    const incoming = [{ id: 1, amount: 9 }];
+    const merged = mergeTransactionsById(prev, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].amount).toBe(9);
+  });
+
+  it('trata ids numericos y string como el mismo', () => {
+    const merged = mergeTransactionsById([{ id: 5 }], [{ id: '5', x: true }]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].x).toBe(true);
+  });
+
+  it('tolera listas nulas o elementos nulos', () => {
+    expect(mergeTransactionsById(null, null)).toEqual([]);
+    expect(mergeTransactionsById([{ id: 1 }], [null])).toEqual([{ id: 1 }]);
   });
 });
 

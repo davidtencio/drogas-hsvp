@@ -18,7 +18,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, doc, getCountFromServer, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, where, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -33,6 +33,7 @@ import {
   compareTransactionsAsc,
   compareTransactionsDesc,
   getLastBalanceAnchor,
+  mergeTransactionsById,
   nextOpenRxUse,
   computeTotalReponer,
   formatCurrency,
@@ -191,6 +192,12 @@ const App = () => {
     expedientes: { loading: false, hasMore: true },
     bitacora: { loading: false, hasMore: true },
   });
+  // Estado de la carga COMPLETA de movimientos por medicamento (where medId==X).
+  // La carga global paginada por createdAt deja fuera rebajos con createdAt
+  // desfasado; para el Kardex (que es por medicamento) cargamos todo el medicamento
+  // y asi saldo, "X de Y" y el total del cierre quedan completos. medId -> estado.
+  const [medLoadStatus, setMedLoadStatus] = useState({}); // 'loading' | 'complete' | 'error'
+  const medLoadInFlightRef = useRef({});
   const pendingWritesRef = useRef([]);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
@@ -1167,6 +1174,54 @@ const App = () => {
     }
   };
 
+  // Carga TODOS los movimientos de un medicamento (where medId==X) y los fusiona
+  // en `transactions`. Garantiza que el Kardex de ese medicamento sea completo:
+  // saldo, "X de Y" y el total del cierre dejan de depender de la ventana global
+  // de 200 por createdAt. Requiere indice Firestore (medId + createdAt desc).
+  const loadAllForMed = async (medId) => {
+    if (!authUser || !cloudReady || !medId) return;
+    if (medLoadInFlightRef.current[medId]) return;
+    medLoadInFlightRef.current[medId] = true;
+    setMedLoadStatus((prev) => ({ ...prev, [medId]: 'loading' }));
+    try {
+      const colRef = collection(db, dataDocPath, 'transactions');
+      const collected = [];
+      let lastDoc = null;
+      for (;;) {
+        const q = lastDoc
+          ? query(colRef, where('medId', '==', medId), orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
+          : query(colRef, where('medId', '==', medId), orderBy('createdAt', 'desc'), limit(500));
+        const snap = await getDocs(q);
+        if (snap.empty) break;
+        collected.push(...snap.docs.map((d) => d.data()));
+        lastDoc = snap.docs[snap.docs.length - 1];
+        if (snap.docs.length < 500) break;
+        await delay(50);
+      }
+      setTransactions((prev) => mergeTransactionsById(prev, collected));
+      setMedLoadStatus((prev) => ({ ...prev, [medId]: 'complete' }));
+      logSyncEvent('med_full_load', `medId=${medId} items=${collected.length}`);
+    } catch (error) {
+      setMedLoadStatus((prev) => ({ ...prev, [medId]: 'error' }));
+      setSyncError(
+        'No se pudo cargar el historial completo del medicamento (falta indice Firestore medId+createdAt o error de conexion).',
+      );
+      logSyncEvent('med_full_load_error', `medId=${medId} code=${error?.code || 'unknown'}`);
+    } finally {
+      medLoadInFlightRef.current[medId] = false;
+    }
+  };
+
+  // Al entrar al Kardex o cambiar de medicamento, asegurar su carga completa.
+  useEffect(() => {
+    if (!authUser || !cloudReady || activeTab !== 'kardex' || !selectedMedId) return;
+    const status = medLoadStatus[selectedMedId];
+    if (status === 'complete' || status === 'loading') return;
+    loadAllForMed(selectedMedId);
+    // loadAllForMed se redefine en cada render; incluirla causaria bucle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser, cloudReady, activeTab, selectedMedId, medLoadStatus]);
+
   useEffect(() => {
     if (!authUser || !cloudReady) return;
     if (!kardexSearch.trim()) return;
@@ -1421,6 +1476,13 @@ const App = () => {
   }, [authUser, syncError, pendingCount, docSyncInFlight, cloudLoading]);
 
   const handleRollover = async () => {
+    // El arrastre de saldos usa currentInventory (todos los medicamentos). Si la
+    // carga global esta incompleta, arrastrariamos saldos parciales y erroneos.
+    // Mejor posponer el rollover hasta tener el historial completo cargado.
+    if (collectionLoadState.transactions.hasMore) {
+      logSyncEvent('rollover_postponed', 'historial global incompleto (hasMore=true)');
+      return;
+    }
     if (!window.confirm('Se ha alcanzado el limite de seguridad de registros. El sistema debe realizar un cierre de periodo automatico.\n\nEsto descargara un respaldo, limpiara el historial y mantendra los saldos actuales.\n\n¿Desea proceder?')) {
       return;
     }
@@ -1906,6 +1968,24 @@ const App = () => {
     );
   };
 
+  // Guardia para el cierre: el total a grabar (totalMedicamento) se calcula sobre
+  // los movimientos cargados. Si el historial del medicamento no esta completo,
+  // ese total podria salir sobre datos parciales y corromper el ancla de saldo.
+  const ensureMedFullyLoadedForCierre = async () => {
+    const status = medLoadStatus[selectedMedId];
+    if (status === 'loading') {
+      alert('Cargando el historial completo del medicamento. Espere unos segundos e intente de nuevo.');
+      return false;
+    }
+    if (status === 'complete') return true;
+    // 'idle'/'error' (p. ej. indice Firestore aun no creado): no podemos garantizar
+    // que el historial este completo. Avisar y exigir confirmacion explicita.
+    return requestStyledConfirm(
+      'No se pudo verificar el historial COMPLETO de este medicamento (posible indice de Firestore faltante). ' +
+        'El total del cierre podria calcularse sobre datos parciales y descuadrar el saldo. ¿Desea continuar de todos modos?',
+    );
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -2074,6 +2154,10 @@ const App = () => {
     } else if (modalType === 'cierre') {
       if (pendingCount > 0) {
         alert('No puede guardar cierre con pendientes de sincronizacion.');
+        return;
+      }
+      if (medLoadStatus[selectedMedId] === 'loading') {
+        alert('Cargando el historial completo del medicamento. Espere a que termine antes de cerrar.');
         return;
       }
       const cierreTurno = toUpper(formData.get('turno'));
@@ -2881,11 +2965,13 @@ const App = () => {
                     Ingreso Medicamento
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (pendingCount > 0) {
                         alert('No puede realizar cierre con pendientes de sincronizacion.');
                         return;
                       }
+                      const fullyLoaded = await ensureMedFullyLoadedForCierre();
+                      if (!fullyLoaded) return;
                       setModalType('cierre');
                       setCierreTurnoValue('SEGUNDO');
                       setShowCatalogMenu(false);
@@ -2939,6 +3025,15 @@ const App = () => {
                 <div className="text-right">
                   <p className="text-slate-400 font-bold uppercase text-[9px]">Saldo Actual</p>
                   <p className="font-bold text-blue-600 text-lg">{currentInventory.find((m) => m.id === selectedMedId)?.stock}</p>
+                  {medLoadStatus[selectedMedId] === 'loading' && (
+                    <p className="text-[8px] font-bold uppercase tracking-wider text-amber-600">Cargando historial...</p>
+                  )}
+                  {medLoadStatus[selectedMedId] === 'complete' && (
+                    <p className="text-[8px] font-bold uppercase tracking-wider text-emerald-600">Historial completo</p>
+                  )}
+                  {medLoadStatus[selectedMedId] === 'error' && (
+                    <p className="text-[8px] font-bold uppercase tracking-wider text-rose-600">Historial parcial</p>
+                  )}
                 </div>
               </div>
             </div>

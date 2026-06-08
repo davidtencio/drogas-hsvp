@@ -63,6 +63,18 @@ export const getDisplayTimestamp = (t) => {
   return 0;
 };
 
+// Une dos listas de movimientos deduplicando por id (gana el de `incoming`).
+// Se usa al fusionar la carga completa por medicamento con lo ya cargado
+// globalmente, sin introducir duplicados. No ordena: cada consumidor ordena.
+export const mergeTransactionsById = (prev, incoming) => {
+  const byId = new Map((prev || []).map((t) => [String(t?.id), t]));
+  (incoming || []).forEach((t) => {
+    if (t == null) return;
+    byId.set(String(t.id), t);
+  });
+  return Array.from(byId.values());
+};
+
 // Ultima ancla de saldo (cierre o ajuste manual) de un medicamento.
 export const getLastBalanceAnchor = (items, medId) =>
   items
