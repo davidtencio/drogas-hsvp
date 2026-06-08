@@ -1213,10 +1213,12 @@ const App = () => {
   };
 
   // Al entrar al Kardex o cambiar de medicamento, asegurar su carga completa.
+  // Solo se dispara cuando el medicamento no tiene estado todavia (undefined).
+  // 'error' es terminal para el auto-reintento (evita un bucle si falta el
+  // indice Firestore); se reintenta con el boton "Reintentar" o recargando.
   useEffect(() => {
     if (!authUser || !cloudReady || activeTab !== 'kardex' || !selectedMedId) return;
-    const status = medLoadStatus[selectedMedId];
-    if (status === 'complete' || status === 'loading') return;
+    if (medLoadStatus[selectedMedId]) return;
     loadAllForMed(selectedMedId);
     // loadAllForMed se redefine en cada render; incluirla causaria bucle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3032,7 +3034,14 @@ const App = () => {
                     <p className="text-[8px] font-bold uppercase tracking-wider text-emerald-600">Historial completo</p>
                   )}
                   {medLoadStatus[selectedMedId] === 'error' && (
-                    <p className="text-[8px] font-bold uppercase tracking-wider text-rose-600">Historial parcial</p>
+                    <button
+                      type="button"
+                      onClick={() => loadAllForMed(selectedMedId)}
+                      className="text-[8px] font-bold uppercase tracking-wider text-rose-600 underline hover:text-rose-700"
+                      title="No se pudo cargar el historial completo. Click para reintentar."
+                    >
+                      Historial parcial - Reintentar
+                    </button>
                   )}
                 </div>
               </div>
