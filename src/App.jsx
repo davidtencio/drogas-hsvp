@@ -399,6 +399,108 @@ const App = () => {
       ...prev,
     ].slice(0, 20));
   };
+  const downloadManualMarkdown = () => {
+    const generatedAt = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
+    const stats = {
+      medications: medications.length,
+      transactions: transactions.length,
+      expedientes: expedientes.length,
+      bitacora: bitacora.length,
+      services: services.length,
+      pharmacists: pharmacists.length,
+    };
+    const md = `# Manual de Uso - Control de Drogas Hospitalizados
+
+> Documento generado automaticamente el ${generatedAt} para servir de base en NotebookLM u otra herramienta de notebook.
+> Datos actuales del sistema: ${stats.medications} medicamentos, ${stats.transactions} movimientos, ${stats.expedientes} expedientes, ${stats.bitacora} entradas de bitacora, ${stats.services} servicios, ${stats.pharmacists} farmaceuticos.
+
+## 1. Que es la aplicacion
+
+Sistema web del Servicio de Farmacia para el control centralizado de sustancias controladas (drogas/estupefacientes) en pacientes hospitalizados. Permite registrar ingresos y egresos, llevar un kardex por medicamento, validar la trazabilidad farmacoterapeutica contra expedientes/recetas y generar la documentacion para reposicion ante la autoridad reguladora.
+
+Toda la informacion se sincroniza en la nube (Firebase) bajo la organizacion del centro de salud.
+
+## 2. Conceptos clave
+
+- **Medicamento / Sustancia controlada**: cada item del inventario con su nombre, identificador y saldo.
+- **Saldo**: existencia disponible de un medicamento. Se calcula a partir de un saldo base ajustable mas los movimientos.
+- **Movimiento (transaccion)**: ingreso (entrada de unidades) o egreso/rebajo (salida por dispensacion).
+- **Kardex**: historial cronologico de movimientos de un medicamento, separado en Recientes e Historico segun la fecha.
+- **Expediente / Receta**: respaldo clinico que justifica un egreso. Una receta puede estar abierta (en uso) o cerrada.
+- **Cierre**: corte que consolida el inventario en un punto del tiempo.
+- **Farmaceutico**: responsable que firma cada operacion.
+
+## 3. Modulos de la aplicacion
+
+### 3.1 Dashboard (Resumen Operativo)
+Vista general del estado del inventario: indicadores de uso, alertas y resumen de la operacion del dia. Punto de entrada para revisar rapidamente la situacion.
+
+### 3.2 Kardex Individual (Kardex de Sustancias Controladas)
+Historial detallado por medicamento. Muestra cada ingreso y egreso con fecha, cantidad, saldo resultante y farmaceutico responsable. Los registros se clasifican en **Recientes** e **Historico** segun su fecha visible. Se usa para auditar el movimiento de una sustancia especifica y verificar que el saldo cuadre.
+
+### 3.3 Revisiones (Auditoria de Expedientes)
+Validacion farmacoterapeutica: cruza los egresos contra los expedientes/recetas para confirmar que cada salida de sustancia controlada tenga respaldo. Permite detectar descuadres o registros sin justificacion.
+
+### 3.4 Bitacora (Bitacora de Jornada)
+Registro narrativo de la jornada: observaciones, incidencias y notas operativas del personal de guardia. Sirve como respaldo documental de lo ocurrido en cada turno.
+
+### 3.5 Solicitud de Reposicion
+Genera la solicitud para reponer existencias de sustancias controladas, consolidando los datos necesarios para el tramite ante la autoridad correspondiente.
+
+### 3.6 Configuracion
+Administracion del sistema:
+- **Configuracion de Medicamentos**: renombrar medicamentos para corregir etiquetas y mostrar el nombre real en todo el sistema.
+- **Uso de Registros**: monitorea cuantos registros se han usado contra el limite configurado y permite actualizar dicho limite.
+- **Respaldo y Restauracion**: descargar la base completa en JSON, restaurar desde un archivo JSON y revisar la auditoria de restauraciones.
+- **Ajuste Manual de Saldo**: corrige el saldo base de un medicamento; la app sigue calculando los movimientos a partir de ese ajuste.
+- **Descargar Manual (Markdown)**: genera este documento.
+
+## 4. Flujos de trabajo tipicos
+
+### Registrar un egreso (dispensacion)
+1. Seleccionar el medicamento.
+2. Indicar la cantidad dispensada y el farmaceutico responsable.
+3. Asociar el expediente/receta que respalda la salida.
+4. Confirmar; el saldo se actualiza y queda en el kardex.
+
+### Registrar un ingreso
+1. Seleccionar el medicamento.
+2. Indicar la cantidad recibida y el farmaceutico.
+3. Confirmar; el saldo aumenta y el ingreso queda en el kardex.
+
+### Cerrar / auditar
+1. Revisar en Kardex que los saldos cuadren.
+2. En Revisiones, validar que los egresos tengan expediente.
+3. Registrar observaciones en la Bitacora.
+
+### Reponer existencias
+1. Ir a Solicitud de Reposicion.
+2. Consolidar los medicamentos y cantidades a solicitar.
+3. Generar la solicitud para el tramite.
+
+## 5. Respaldo de datos
+Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Cargar y Restaurar JSON**. Cada restauracion queda en la auditoria de restauraciones de la sesion. Se recomienda descargar el respaldo periodicamente.
+
+## 6. Buenas practicas
+- Verificar siempre el farmaceutico responsable antes de confirmar un movimiento.
+- No registrar egresos sin su expediente/receta de respaldo.
+- Revisar el indicador de Uso de Registros para no superar el limite.
+- Usar el Ajuste Manual de Saldo solo para correcciones justificadas.
+- Descargar respaldos JSON con regularidad.
+
+---
+*Manual base autogenerado. Editelo en su notebook para ampliarlo con capturas, ejemplos y politicas internas del servicio.*
+`;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `manual_drogas_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
   const restoreDatabaseBackup = async (file) => {
     if (!file || !authUser) return;
     setCloudStatus('Restaurando...');
@@ -3811,6 +3913,13 @@ const App = () => {
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-700"
                 >
                   Cargar y Restaurar JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadManualMarkdown}
+                  className="bg-violet-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-violet-700"
+                >
+                  Descargar Manual (Markdown)
                 </button>
                 <input
                   ref={restoreInputRef}
