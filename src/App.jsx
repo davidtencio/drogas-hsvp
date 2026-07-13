@@ -501,6 +501,84 @@ Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Car
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+  const downloadFentanylNotebookMarkdown = async () => {
+    const fentanyl = medications.find((med) => /FENTAN(YL|ILO)/i.test(med.name || ''));
+    if (!fentanyl) {
+      alert('No se encontro fentanilo en el catalogo de medicamentos.');
+      return;
+    }
+
+    let reportTransactions = transactions.filter((t) => t.medId === fentanyl.id);
+    if (medLoadStatus[fentanyl.id] !== 'complete') {
+      const loaded = await loadAllForMed(fentanyl.id);
+      if (!Array.isArray(loaded)) {
+        alert('No se pudo verificar el historial completo de fentanilo. Revise la conexion o el indice de Firestore e intente de nuevo.');
+        return;
+      }
+      reportTransactions = mergeTransactionsById(reportTransactions, loaded).filter((t) => t.medId === fentanyl.id);
+    }
+
+    const ordered = reportTransactions.slice().sort(compareTransactionsAsc);
+    const operational = ordered.filter((t) => !t.isCierre);
+    const inputs = operational.filter((t) => t.type === 'IN').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const outputs = operational.filter((t) => t.type !== 'IN').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const currentStock = (() => {
+      const anchor = ordered.filter((t) => t.isCierre).sort(compareTransactionsDesc)[0];
+      const anchorTime = anchor ? getTransactionTimestamp(anchor) : null;
+      return operational
+        .filter((t) => anchorTime === null || getTransactionTimestamp(t) > anchorTime)
+        .reduce(
+          (stock, t) => stock + (t.type === 'IN' ? Number(t.amount) || 0 : -(Number(t.amount) || 0)),
+          Number(anchor?.totalMedicamento) || 0,
+        );
+    })();
+    const escapeMd = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').trim() || '—';
+    const rows = ordered.map((t) => {
+      const movementType = t.isCierre ? (t.isManualAdjustment ? 'AJUSTE DE SALDO' : 'CIERRE') : t.type === 'IN' ? 'INGRESO' : 'EGRESO';
+      const quantity = t.isCierre ? (t.totalMedicamento ?? t.amount ?? '') : t.amount;
+      return `| ${escapeMd(t.date)} | ${movementType} | ${escapeMd(quantity)} | ${escapeMd(t.service)} | ${escapeMd(t.cama)} | ${escapeMd(t.prescription)} | ${escapeMd(t.dosis)} | ${escapeMd(t.rxType)} | ${escapeMd(t.observacion)} | ${escapeMd(t.pharmacist)} |`;
+    });
+    const generatedAt = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
+    const firstDate = ordered[0]?.date || 'Sin movimientos';
+    const lastDate = ordered[ordered.length - 1]?.date || 'Sin movimientos';
+    const md = `# Informe de movimientos de ${escapeMd(fentanyl.name)}
+
+> Fuente: Control de Drogas Hospitalizados (HSVP).
+> Generado el ${generatedAt}, zona horaria America/Costa_Rica.
+> Historial completo verificado al momento de la descarga.
+
+## Resumen
+
+- Medicamento: **${escapeMd(fentanyl.name)}**
+- Identificador interno: **${escapeMd(fentanyl.id)}**
+- Periodo registrado: **${escapeMd(firstDate)} a ${escapeMd(lastDate)}**
+- Registros incluidos: **${ordered.length}**
+- Total de ingresos: **${inputs} unidades**
+- Total de egresos: **${outputs} unidades**
+- Saldo calculado actual: **${currentStock} unidades**
+
+## Movimientos
+
+| Fecha | Tipo | Cantidad / saldo | Servicio | Cama | Receta | Dosis | Tipo de receta | Observacion | Farmaceutico |
+|---|---|---:|---|---|---|---|---|---|---|
+${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | — | — | — | — | — |'}
+
+## Notas para el analisis
+
+- Los ingresos aumentan el inventario y los egresos lo disminuyen.
+- Los cierres y ajustes de saldo son anclas de inventario; su cantidad representa el saldo consolidado, no una entrada ni una salida.
+- Este archivo Markdown esta estructurado para utilizarse como fuente en NotebookLM.
+`;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `informe_fentanilo_notebooklm_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
   const restoreDatabaseBackup = async (file) => {
     if (!file || !authUser) return;
     setCloudStatus('Restaurando...');
@@ -1303,12 +1381,14 @@ Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Car
       setTransactions((prev) => mergeTransactionsById(prev, collected));
       setMedLoadStatus((prev) => ({ ...prev, [medId]: 'complete' }));
       logSyncEvent('med_full_load', `medId=${medId} items=${collected.length}`);
+      return collected;
     } catch (error) {
       setMedLoadStatus((prev) => ({ ...prev, [medId]: 'error' }));
       setSyncError(
         'No se pudo cargar el historial completo del medicamento (falta indice Firestore medId+createdAt o error de conexion).',
       );
       logSyncEvent('med_full_load_error', `medId=${medId} code=${error?.code || 'unknown'}`);
+      return null;
     } finally {
       medLoadInFlightRef.current[medId] = false;
     }
@@ -3920,6 +4000,13 @@ Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Car
                   className="bg-violet-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-violet-700"
                 >
                   Descargar Manual (Markdown)
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadFentanylNotebookMarkdown}
+                  className="bg-fuchsia-700 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-fuchsia-800"
+                >
+                  Informe Fentanilo (NotebookLM)
                 </button>
                 <input
                   ref={restoreInputRef}
