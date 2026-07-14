@@ -96,6 +96,9 @@ const getLotInitializationErrorMessage = (error = '') => {
   if (error === 'TOTAL_MISMATCH') return 'La suma de los lotes debe coincidir exactamente con el saldo.';
   return 'Revise la distribucion de lotes antes de continuar.';
 };
+const forceUppercaseInput = (event) => {
+  event.currentTarget.value = event.currentTarget.value.toUpperCase();
+};
 const INFUSION_DOSE_PATTERN = /INFUSION:\s*([0-9]+(?:\.[0-9]+)?)\s*AMPOLLAS\s*EN\s*([0-9]+(?:\.[0-9]+)?)\s*CC\s*A\s*([0-9]+(?:\.[0-9]+)?)\s*CC\/HR\s*DURACION:\s*([0-9]+(?:\.[0-9]+)?)\s*HRS/i;
 const PRIORITY_MEDICATION_ORDER = [
   'MORFINA 15 MG',
@@ -5247,6 +5250,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           required
                           readOnly={editingLotUsedQuantity > 0}
                           className="uppercase"
+                          onInput={forceUppercaseInput}
                           defaultValue={editingTransaction?.lotNumber || ''}
                         />
                       </div>
@@ -5366,7 +5370,13 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                     <InputLabel label="N Receta" name="receta" required />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <InputLabel label="Numero de lote" name="lotNumber" className="uppercase" required />
+                    <InputLabel
+                      label="Numero de lote"
+                      name="lotNumber"
+                      className="uppercase"
+                      onInput={forceUppercaseInput}
+                      required
+                    />
                     <InputLabel label="Fecha de expiracion" name="expirationDate" type="date" required />
                   </div>
                   <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
