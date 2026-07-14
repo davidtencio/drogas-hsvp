@@ -3,6 +3,7 @@ import {
   allocateLotsFEFO,
   formatLotTooltip,
   getAvailableLots,
+  getLotInventorySummary,
   getLotOriginEditState,
   getLotOrigins,
   getLotUsage,
@@ -159,6 +160,27 @@ describe('lot inventory', () => {
       'OLD',
       'LIVE',
     ]);
+  });
+});
+
+describe('lot inventory integrity summary', () => {
+  it('separates physical, usable, and expired available stock', () => {
+    const items = [
+      ingreso(1, 10, 'ACTIVE', '2027-05-31', 100),
+      ingreso(2, 5, 'EXPIRED', '2026-07-12', 200),
+      egreso(10, 4, [allocation(1, 'ACTIVE', '2027-05-31', 4)]),
+    ];
+    expect(getLotInventorySummary(items, MED_ID, { asOf: AS_OF })).toEqual(
+      expect.objectContaining({ lotCount: 2, totalAvailable: 11, usableAvailable: 6, expiredAvailable: 5 }),
+    );
+  });
+
+  it('counts initialization origins without changing global stock semantics', () => {
+    const initialized = ingreso(1, 7, 'INITIAL', '2027-05-31', 100, {
+      isLotInitialization: true,
+      affectsGlobalStock: false,
+    });
+    expect(getLotInventorySummary([initialized], MED_ID, { asOf: AS_OF }).totalAvailable).toBe(7);
   });
 });
 

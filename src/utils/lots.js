@@ -142,6 +142,32 @@ export const getAvailableLots = (transactions, medId, { asOf = new Date(), inclu
     .sort(compareLotsFEFO);
 };
 
+export const getLotInventorySummary = (transactions, medId, { asOf = new Date() } = {}) => {
+  const usage = getLotUsage(transactions, medId);
+  const lots = getLotOrigins(transactions, medId).map((origin) => {
+    const usedQuantity = usage[origin.sourceTransactionId] || 0;
+    const availableQuantity = Math.max(0, origin.receivedQuantity - usedQuantity);
+    return {
+      ...origin,
+      usedQuantity,
+      availableQuantity,
+      expired: isLotExpired(origin.expirationDate, asOf),
+    };
+  });
+  const availableLots = lots.filter((lot) => lot.availableQuantity > 0);
+  const totalAvailable = availableLots.reduce((sum, lot) => sum + lot.availableQuantity, 0);
+  const expiredAvailable = availableLots
+    .filter((lot) => lot.expired)
+    .reduce((sum, lot) => sum + lot.availableQuantity, 0);
+  return {
+    lots,
+    lotCount: availableLots.length,
+    totalAvailable,
+    usableAvailable: totalAvailable - expiredAvailable,
+    expiredAvailable,
+  };
+};
+
 export const allocateLotsFEFO = (transactions, medId, amount, { asOf = new Date() } = {}) => {
   const requestedQuantity = Number(amount);
   if (!isPositiveInteger(requestedQuantity)) {

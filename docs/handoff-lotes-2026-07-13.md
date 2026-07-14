@@ -4,7 +4,7 @@ Fecha de corte: 13 de julio de 2026, zona horaria America/Costa_Rica.
 
 ## Estado general
 
-Las fases 0 a 4 estan implementadas, probadas y publicadas en `https://drogas-hsvp.web.app`.
+Las fases 0 a 5 estan implementadas, probadas y publicadas en `https://drogas-hsvp.web.app`.
 
 El seguimiento FEFO esta habilitado gradualmente por medicamento:
 
@@ -76,7 +76,18 @@ Al momento de la ultima verificacion en produccion figuraban `0 / 17` medicament
 - Verificacion autenticada de la inicializacion de Morfina sin guardar: saldo completo de 189 unidades, conciliacion inicialmente bloqueada y mensajes correctos.
 - La interfaz publicada cargo sin errores de consola en las verificaciones completadas.
 
-## Pendiente para la fase 5
+## Actualizacion de fase 5 — 14 de julio de 2026
+
+- Reintegros ahora exigen lote y expiracion.
+- Ajustes absolutos quedan bloqueados despues de inicializar un medicamento.
+- Cierres de medicamentos inicializados verifican integridad y usan el saldo recien calculado.
+- Se agrego conciliacion entre saldo global, existencia fisica por lotes, existencia vigente y vencida.
+- Cada movimiento nuevo invalida la verificacion anterior del medicamento.
+- El gate exige 17/17 inicializados y todos conciliados, ademas de respaldo y sincronizacion limpia.
+- Suite final de fase 5: 65 pruebas aprobadas.
+- Detalle: `phase-5-integrity-release-gate.md`.
+
+## Pendiente para la activacion operativa
 
 1. Descargar un respaldo completo nuevo inmediatamente antes de la carga inicial y verificar su checksum en la sesion.
 2. Realizar el conteo fisico e inicializar los 17 medicamentos, uno por uno.
@@ -85,15 +96,7 @@ Al momento de la ultima verificacion en produccion figuraban `0 / 17` medicament
    - suma disponible por lotes igual al saldo;
    - lotes y expiraciones contra el conteo fisico;
    - estado de inicializacion persistido despues de recargar.
-4. Definir y probar el tratamiento de operaciones que aumentan o reemplazan saldo fuera del ingreso ordinario:
-   - reintegros;
-   - ajustes manuales de saldo;
-   - cierres/inventarios que actuan como ancla de saldo.
-   Estas operaciones pueden crear diferencias entre saldo global y existencia por lote si se usan despues de inicializar. No debe activarse el bloqueo global hasta resolver esta politica.
-5. Agregar una comprobacion de integridad por medicamento: saldo global versus total disponible por lotes, con detalle de vencidos.
-6. Completar el gate de release para exigir los 17 medicamentos inicializados, respaldo verificado, cero pendientes y cero errores de sincronizacion.
-7. Activar el bloqueo global de egresos sin `lotAllocations` solamente cuando el gate anterior este aprobado.
-8. Ejecutar una prueba funcional controlada de extremo a extremo:
+4. Ejecutar una prueba funcional controlada de extremo a extremo:
    - ingreso de lote;
    - egreso desde un lote;
    - egreso dividido entre lotes;
@@ -101,7 +104,8 @@ Al momento de la ultima verificacion en produccion figuraban `0 / 17` medicament
    - edicion/reasignacion;
    - receta abierta;
    - lote vencido e insuficiencia.
-9. Descargar y validar un respaldo posterior a la migracion.
+5. Confirmar que todas las condiciones del gate esten en `OK`.
+6. Descargar y validar un respaldo posterior a la migracion.
 
 ## Precauciones para continuar
 

@@ -45,6 +45,7 @@ import {
   allocateLotsFEFO,
   formatLotExpirationDate,
   formatLotTooltip,
+  getLotInventorySummary,
   getLotOriginEditState,
   getLotUsage,
   isLotExpired,
@@ -140,6 +141,8 @@ const App = () => {
   const [lotInitializationRows, setLotInitializationRows] = useState([]);
   const [lotInitializationPharmacist, setLotInitializationPharmacist] = useState('');
   const [lotInitializationSaving, setLotInitializationSaving] = useState(false);
+  const [lotIntegrityAuditByMedId, setLotIntegrityAuditByMedId] = useState({});
+  const [lotIntegrityVerifying, setLotIntegrityVerifying] = useState(false);
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
@@ -304,6 +307,10 @@ const App = () => {
     requestSecurityKey().then((ok) => {
       if (!ok) return;
     const medId = adjustMedId || selectedMedId;
+    if (lotInitializationByMedId[medId]?.completed) {
+      alert('El ajuste absoluto esta bloqueado para medicamentos con lotes inicializados. Registre una entrada o salida trazable para corregir el saldo.');
+      return;
+    }
     const amount = parseInt(adjustBalanceValue, 10);
     if (!medId || !Number.isFinite(amount) || amount < 0) {
       alert('Ingrese un saldo valido (entero mayor o igual a 0).');
@@ -961,6 +968,14 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     deduped.reverse();
     const ok = persistPendingWrites(deduped);
     if (!ok) return false;
+    if (action.collection === 'transactions' && action.data?.medId) {
+      setLotIntegrityAuditByMedId((previous) => {
+        if (!previous[action.data.medId]) return previous;
+        const nextAudit = { ...previous };
+        delete nextAudit[action.data.medId];
+        return nextAudit;
+      });
+    }
     logSyncEvent('enqueue', `${enriched.type} ${enriched.collection}/${enriched.id}`);
     if (!authUser) return true;
     flushWriteQueue();
@@ -2140,17 +2155,22 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const hasSyncError = Boolean(syncError);
     const hasQueueRisk = queueOverflow || writeBlockedByStorage;
     const hasRecentBackup = backupAuditLog.length > 0;
+    const allInitialized = medications.length > 0 && medications.every((med) => lotInitializationByMedId[med.id]?.completed);
+    const allIntegrityVerified =
+      allInitialized && medications.every((med) => lotIntegrityAuditByMedId[med.id]?.match === true);
     const checks = [
       { key: 'no_pending', label: 'Sin pendientes de sincronizacion', ok: !hasPending },
       { key: 'no_sync_error', label: 'Sin errores activos de sincronizacion', ok: !hasSyncError },
       { key: 'no_queue_risk', label: 'Sin riesgo de cola local', ok: !hasQueueRisk },
       { key: 'recent_backup', label: 'Respaldo verificado en sesion', ok: hasRecentBackup },
+      { key: 'all_initialized', label: 'Todos los medicamentos inicializados', ok: allInitialized },
+      { key: 'lot_integrity', label: 'Saldo global coincide con existencias por lote', ok: allIntegrityVerified },
     ];
     return {
       checks,
       approved: checks.every((c) => c.ok),
     };
-  }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, backupAuditLog]);
+  }, [pendingCount, syncError, queueOverflow, writeBlockedByStorage, backupAuditLog, medications, lotInitializationByMedId, lotIntegrityAuditByMedId]);
   const recentPage = useMemo(() => paginate(recentTransactions, kardexRecentPage), [recentTransactions, kardexRecentPage]);
   const historicPage = useMemo(() => paginate(historicTransactions, kardexHistoricPage), [historicTransactions, kardexHistoricPage]);
   const auditoriaPageData = useMemo(() => paginate(filteredExpedientes, auditoriaPage), [filteredExpedientes, auditoriaPage]);
@@ -2250,6 +2270,66 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       return null;
     }
     return allocation.allocations;
+  };
+
+  const verifyLotIntegrity = async (medId, { notify = true } = {}) => {
+    if (!lotInitializationByMedId[medId]?.completed) {
+      if (notify) alert('Inicialice los lotes de este medicamento antes de verificar su integridad.');
+      return null;
+    }
+    setCloudStatus('Verificando integridad de lotes...');
+    const loaded = await loadAllForMed(medId);
+    if (!Array.isArray(loaded)) {
+      setCloudStatus('Sin conexion');
+      if (notify) alert('No se pudo cargar el historial completo para verificar los lotes.');
+      return null;
+    }
+    const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+    const globalStock = computeMedStock(completeTransactions, medId);
+    const lotSummary = getLotInventorySummary(completeTransactions, medId);
+    const result = {
+      verifiedAt: new Date().toISOString(),
+      globalStock,
+      lotStock: lotSummary.totalAvailable,
+      usableStock: lotSummary.usableAvailable,
+      expiredStock: lotSummary.expiredAvailable,
+      lotCount: lotSummary.lotCount,
+      match: globalStock === lotSummary.totalAvailable,
+    };
+    setLotIntegrityAuditByMedId((previous) => ({ ...previous, [medId]: result }));
+    setCloudStatus('Sincronizado');
+    if (notify) {
+      alert(
+        result.match
+          ? `Integridad correcta. Saldo global y lotes: ${globalStock}. Vigente: ${result.usableStock}; vencido: ${result.expiredStock}.`
+          : `Descuadre detectado. Saldo global: ${globalStock}; existencias por lote: ${result.lotStock}.`,
+      );
+    }
+    return result;
+  };
+
+  const verifyAllLotIntegrity = async () => {
+    if (lotIntegrityVerifying) return;
+    const initialized = medications.filter((med) => lotInitializationByMedId[med.id]?.completed);
+    if (initialized.length === 0) {
+      alert('Todavia no hay medicamentos inicializados para verificar.');
+      return;
+    }
+    setLotIntegrityVerifying(true);
+    let mismatches = 0;
+    try {
+      for (const med of initialized) {
+        const result = await verifyLotIntegrity(med.id, { notify: false });
+        if (!result?.match) mismatches += 1;
+      }
+      alert(
+        mismatches === 0
+          ? `Integridad verificada en ${initialized.length} medicamento(s).`
+          : `Verificacion terminada con ${mismatches} medicamento(s) descuadrado(s).`,
+      );
+    } finally {
+      setLotIntegrityVerifying(false);
+    }
   };
 
   const openLotInitialization = async (medId) => {
@@ -2625,8 +2705,17 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         alert('Cargando el historial completo del medicamento. Espere a que termine antes de cerrar.');
         return;
       }
+      let verifiedClosingStock = Number(selectedCurrentStock) || 0;
+      if (lotInitializationByMedId[selectedMedId]?.completed) {
+        const integrity = await verifyLotIntegrity(selectedMedId, { notify: false });
+        if (!integrity?.match) {
+          alert('No puede guardar el cierre: el saldo global no coincide con las existencias por lote. Revise la integridad en Configuracion.');
+          return;
+        }
+        verifiedClosingStock = integrity.globalStock;
+      }
       const cierreTurno = toUpper(formData.get('turno'));
-      const computedTotalMedicamento = Number(selectedCurrentStock) || 0;
+      const computedTotalMedicamento = verifiedClosingStock;
       const newCierre = {
         id: Date.now(),
         date: now,
@@ -2821,6 +2910,19 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       const medId = formData.get('medicationId');
       const receta = toUpper(formData.get('receta'));
       const motivo = toUpper(formData.get('motivo'));
+      const lotNumber = toUpper(formData.get('lotNumber'));
+      const expirationDate = String(formData.get('expirationDate') || '');
+      const lotValidation = validateLotEntry({ amount, lotNumber, expirationDate });
+      if (!lotValidation.valid) {
+        alert('Ingrese una cantidad, un numero de lote y una fecha de expiracion validos para el reintegro.');
+        return;
+      }
+      if (isLotExpired(expirationDate)) {
+        const proceedExpired = await requestStyledConfirm(
+          `El lote ${lotNumber} esta vencido (${expirationDate}). ¿Desea registrar el reintegro de todos modos?`,
+        );
+        if (!proceedExpired) return;
+      }
       const prescription = `RECETA ${receta} - ${motivo}`;
       const newTransaction = {
         id: Date.now(),
@@ -2836,6 +2938,8 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         rxQuantity,
         rxUsed: 0,
         pharmacist: toUpper(formData.get('farmaceutico') || pharmacists[0] || ''),
+        lotNumber,
+        expirationDate,
       };
       const okReint = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
       if (!okReint) {
@@ -4360,6 +4464,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                   {sortedMedications.map((med) => {
                     const state = lotInitializationByMedId[med.id];
+                    const integrity = lotIntegrityAuditByMedId[med.id];
                     return (
                       <div key={med.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                         <div className="min-w-0">
@@ -4369,9 +4474,25 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           </p>
                         </div>
                         {state?.completed ? (
-                          <span className="text-[9px] font-bold uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-                            Inicializado · {state.lotCount} lote(s)
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[9px] font-bold uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                              Inicializado · {state.lotCount} lote(s)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => verifyLotIntegrity(med.id)}
+                              disabled={lotIntegrityVerifying || pendingCount > 0}
+                              className={`text-[9px] font-bold uppercase rounded border px-2 py-1 disabled:opacity-50 ${
+                                integrity?.match
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : integrity
+                                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                    : 'border-blue-200 bg-blue-50 text-blue-700'
+                              }`}
+                            >
+                              {integrity?.match ? `Integridad OK · ${integrity.lotStock}` : integrity ? 'Descuadrado' : 'Verificar integridad'}
+                            </button>
+                          </div>
                         ) : (
                           <button
                             type="button"
@@ -4386,6 +4507,14 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                     );
                   })}
                 </div>
+                <button
+                  type="button"
+                  onClick={verifyAllLotIntegrity}
+                  disabled={lotIntegrityVerifying || pendingCount > 0}
+                  className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 py-2 text-[10px] font-bold uppercase text-blue-700 disabled:opacity-50"
+                >
+                  {lotIntegrityVerifying ? 'Verificando...' : 'Verificar integridad de todos los inicializados'}
+                </button>
               </div>
               <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
                 <div className="flex items-center justify-between gap-3">
@@ -4452,11 +4581,17 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 <button
                   type="button"
                   onClick={applyManualBalanceAdjustment}
-                  className="bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700"
+                  disabled={Boolean(lotInitializationByMedId[adjustMedId]?.completed)}
+                  className="bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Aplicar Ajuste
                 </button>
               </div>
+              {lotInitializationByMedId[adjustMedId]?.completed && (
+                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  Ajuste absoluto bloqueado: este medicamento ya utiliza lotes. Registre una entrada o salida trazable.
+                </p>
+              )}
             </div>
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-6 py-3 border-b border-slate-100 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500 grid grid-cols-12 gap-3">
@@ -5229,6 +5364,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel label="Cantidad a Reintegrar" name="amount" type="number" required />
                     <InputLabel label="N Receta" name="receta" required />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <InputLabel label="Numero de lote" name="lotNumber" className="uppercase" required />
+                    <InputLabel label="Fecha de expiracion" name="expirationDate" type="date" required />
                   </div>
                   <InputLabel label="Motivo del Reintegro" name="motivo" required placeholder="Especifique la razon..." />
                   <SelectLabel label="Farmaceutico" name="farmaceutico" options={pharmacists} />
