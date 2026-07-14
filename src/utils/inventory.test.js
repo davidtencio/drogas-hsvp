@@ -178,6 +178,14 @@ describe('computeMedStock', () => {
     ];
     expect(computeMedStock(txs, 'm')).toBe(-2);
   });
+
+  it('ignora origenes de inicializacion que no afectan el saldo global', () => {
+    const txs = [
+      { medId: 'm', type: 'IN', amount: 10, createdAt: 1 },
+      { medId: 'm', type: 'IN', amount: 10, createdAt: 2, isLotInitialization: true, affectsGlobalStock: false },
+    ];
+    expect(computeMedStock(txs, 'm')).toBe(10);
+  });
 });
 
 describe('nextOpenRxUse (recetas abiertas)', () => {

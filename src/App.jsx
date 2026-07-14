@@ -18,7 +18,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, doc, getCountFromServer, getDoc, getDocs, limit, orderBy, query, setDoc, startAfter, where, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, setDoc, startAfter, where, writeBatch, deleteField } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -36,9 +36,21 @@ import {
   mergeTransactionsById,
   nextOpenRxUse,
   computeTotalReponer,
+  computeMedStock,
   formatCurrency,
   parseCurrency,
 } from './utils/inventory';
+import { getBackupChecksumSource, getBackupSummary } from './utils/backup';
+import {
+  allocateLotsFEFO,
+  formatLotExpirationDate,
+  formatLotTooltip,
+  getLotOriginEditState,
+  getLotUsage,
+  isLotExpired,
+  validateLotEntry,
+  validateLotInitialization,
+} from './utils/lots';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -69,11 +81,20 @@ const LOCAL_CACHE_TX_LIMIT = 200;
 const LOCAL_CACHE_EXP_LIMIT = 200;
 const LOCAL_CACHE_BITACORA_LIMIT = 100;
 const WRITE_BATCH_SIZE = 200;
-const BACKUP_SCHEMA_VERSION = 2;
+const BACKUP_SCHEMA_VERSION = 3;
 const QUOTA_EXCEEDED_ERRORS = ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'];
 const INITIAL_MEDICATIONS_BY_ID = new Map(INITIAL_MEDICATIONS.map((m) => [m.id, m]));
 const RECOVERABLE_MED_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/i;
 const AUTO_MED_NAME_PATTERN = /^MED\s+\d+$/i;
+const getLotInitializationErrorMessage = (error = '') => {
+  if (error.includes('INVALID_AMOUNT')) return 'Cada cantidad debe ser un numero entero mayor que cero.';
+  if (error.includes('MISSING_LOT_NUMBER')) return 'Ingrese el numero de lote en todas las filas.';
+  if (error.includes('INVALID_EXPIRATION_DATE')) return 'Ingrese una fecha de expiracion valida en todas las filas.';
+  if (error.includes('DUPLICATE_LOT')) return 'No repita el mismo lote con la misma fecha de expiracion.';
+  if (error === 'MISSING_LOTS') return 'Agregue al menos un lote para distribuir el saldo.';
+  if (error === 'TOTAL_MISMATCH') return 'La suma de los lotes debe coincidir exactamente con el saldo.';
+  return 'Revise la distribucion de lotes antes de continuar.';
+};
 const INFUSION_DOSE_PATTERN = /INFUSION:\s*([0-9]+(?:\.[0-9]+)?)\s*AMPOLLAS\s*EN\s*([0-9]+(?:\.[0-9]+)?)\s*CC\s*A\s*([0-9]+(?:\.[0-9]+)?)\s*CC\/HR\s*DURACION:\s*([0-9]+(?:\.[0-9]+)?)\s*HRS/i;
 const PRIORITY_MEDICATION_ORDER = [
   'MORFINA 15 MG',
@@ -112,6 +133,13 @@ const App = () => {
   const [syncEvents, setSyncEvents] = useState([]);
   const [restoreAuditLog, setRestoreAuditLog] = useState([]);
   const [backupAuditLog, setBackupAuditLog] = useState([]);
+  const [backupInProgress, setBackupInProgress] = useState(false);
+  const [lotInitializationByMedId, setLotInitializationByMedId] = useState({});
+  const [lotInitializationMedId, setLotInitializationMedId] = useState('');
+  const [lotInitializationTargetStock, setLotInitializationTargetStock] = useState(0);
+  const [lotInitializationRows, setLotInitializationRows] = useState([]);
+  const [lotInitializationPharmacist, setLotInitializationPharmacist] = useState('');
+  const [lotInitializationSaving, setLotInitializationSaving] = useState(false);
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
@@ -346,58 +374,79 @@ const App = () => {
     setConfirmPromptMessage('');
     if (resolver) resolver(Boolean(accepted));
   };
-  const downloadDatabaseBackup = () => {
-    const summary = {
-      medications: medications.length,
-      transactions: transactions.length,
-      expedientes: expedientes.length,
-      bitacora: bitacora.length,
-      services: services.length,
-      pharmacists: pharmacists.length,
-      condiciones: condiciones.length,
-    };
-    const checksum = btoa(
-      unescape(
-        encodeURIComponent(
-          `${summary.medications}|${summary.transactions}|${summary.expedientes}|${summary.bitacora}|${summary.services}|${summary.pharmacists}|${summary.condiciones}|${selectedMedId}|${maxRecordsLimit}`,
-        ),
-      ),
-    );
-    const payload = {
-      backupSchemaVersion: BACKUP_SCHEMA_VERSION,
-      exportedAt: new Date().toISOString(),
-      orgId: ORG_ID,
-      summary,
-      checksum,
-      data: {
+  const downloadDatabaseBackup = async () => {
+    if (!authUser || backupInProgress) return;
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de generar un respaldo completo.');
+      return;
+    }
+    setBackupInProgress(true);
+    setCloudStatus('Generando respaldo completo...');
+    try {
+      const loadCompleteCollection = async (name) => {
+        const snap = await getDocsFromServer(collection(db, dataDocPath, name));
+        return snap.docs.map((item) => {
+          const data = item.data();
+          return { ...data, id: data.id ?? item.id };
+        });
+      };
+      const [allTransactions, allExpedientes, allBitacora] = await Promise.all([
+        loadCompleteCollection('transactions'),
+        loadCompleteCollection('expedientes'),
+        loadCompleteCollection('bitacora'),
+      ]);
+      const completeData = {
         medications,
         selectedMedId,
         maxRecords: maxRecordsLimit,
         services,
         pharmacists,
         condiciones,
-        transactions,
-        expedientes,
-        bitacora,
-      },
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `backup_drogas_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setBackupAuditLog((prev) => [
-      {
-        at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
-        fileName: link.download,
+        lotInitializationByMedId,
+        transactions: allTransactions,
+        expedientes: allExpedientes,
+        bitacora: allBitacora,
+      };
+      const summary = getBackupSummary(completeData);
+      const checksum = btoa(unescape(encodeURIComponent(getBackupChecksumSource(summary, selectedMedId, maxRecordsLimit))));
+      const payload = {
+        backupSchemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: new Date().toISOString(),
+        orgId: ORG_ID,
+        backupCoverage: {
+          complete: true,
+          source: 'firestore-server',
+          collections: ['transactions', 'expedientes', 'bitacora'],
+        },
         summary,
-      },
-      ...prev,
-    ].slice(0, 20));
+        checksum,
+        data: completeData,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `backup_drogas_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setBackupAuditLog((prev) => [
+        {
+          at: new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16),
+          fileName: link.download,
+          summary,
+        },
+        ...prev,
+      ].slice(0, 20));
+      setCloudStatus('Sincronizado');
+    } catch (error) {
+      console.error(error);
+      setCloudStatus('Sin conexion');
+      alert('No se pudo generar el respaldo completo desde Firestore. Revise la conexion e intente de nuevo.');
+    } finally {
+      setBackupInProgress(false);
+    }
   };
   const downloadManualMarkdown = () => {
     const generatedAt = new Date().toLocaleString('es-CR', { hour12: false, timeZone: CR_TIMEZONE }).slice(0, 16);
@@ -519,7 +568,7 @@ Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Car
     }
 
     const ordered = reportTransactions.slice().sort(compareTransactionsAsc);
-    const operational = ordered.filter((t) => !t.isCierre);
+    const operational = ordered.filter((t) => !t.isCierre && t.affectsGlobalStock !== false);
     const inputs = operational.filter((t) => t.type === 'IN').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     const outputs = operational.filter((t) => t.type !== 'IN').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     const currentStock = (() => {
@@ -594,6 +643,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       const incomingServices = Array.isArray(data.services) ? data.services : [];
       const incomingPharmacists = Array.isArray(data.pharmacists) ? data.pharmacists : [];
       const incomingCondiciones = Array.isArray(data.condiciones) ? data.condiciones : [];
+      const incomingLotInitializationByMedId =
+        data.lotInitializationByMedId && typeof data.lotInitializationByMedId === 'object'
+          ? data.lotInitializationByMedId
+          : {};
       const incomingSelectedMedId =
         typeof data.selectedMedId === 'string' && data.selectedMedId ? data.selectedMedId : incomingMedications[0]?.id;
       const incomingMaxRecords =
@@ -674,6 +727,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           medications: incomingMedications,
           selectedMedId: incomingSelectedMedId || incomingMedications[0].id,
           maxRecords: incomingMaxRecords,
+          lotInitializationByMedId: incomingLotInitializationByMedId,
         },
         { merge: true },
       );
@@ -690,6 +744,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setServices(incomingServices);
       setPharmacists(incomingPharmacists);
       setCondiciones(incomingCondiciones);
+      setLotInitializationByMedId(incomingLotInitializationByMedId);
       setTransactions(incomingTransactions);
       setExpedientes(incomingExpedientes);
       setBitacora(incomingBitacora);
@@ -841,6 +896,8 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
     const proceed = await confirmIfNegativeStock(transaction.medId, amountToUse);
     if (!proceed) return;
+    const lotAllocations = await prepareLotAllocations(transaction.medId, amountToUse);
+    if (!lotAllocations) return;
     const nextUsed = nextOpenRxUse(
       transactions,
       transaction.medId,
@@ -865,6 +922,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       createdAt: Date.now(),
       type: 'OUT',
       amount: amountToUse,
+      lotAllocations,
       rxUsed: nextUsed,
       pharmacist: toUpper(overridePharmacist || transaction.pharmacist),
     };
@@ -1130,6 +1188,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           if (data.pharmacists?.length) legacyPharmacists = data.pharmacists;
           if (data.condiciones?.length) legacyCondiciones = data.condiciones;
           if (data.selectedMedId) setSelectedMedId(data.selectedMedId);
+          if (data.lotInitializationByMedId && typeof data.lotInitializationByMedId === 'object') {
+            setLotInitializationByMedId(data.lotInitializationByMedId);
+          }
           if (data.transactions?.length || data.expedientes?.length || data.bitacora?.length) {
             const batch = writeBatch(db);
             data.transactions?.forEach((item) => {
@@ -1285,6 +1346,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           if (stored.services?.length) setServices(stored.services);
           if (stored.pharmacists?.length) setPharmacists(stored.pharmacists);
           if (stored.condiciones?.length) setCondiciones(stored.condiciones);
+          if (stored.lotInitializationByMedId && typeof stored.lotInitializationByMedId === 'object') {
+            setLotInitializationByMedId(stored.lotInitializationByMedId);
+          }
           if (stored.selectedMedId) setSelectedMedId(stored.selectedMedId);
           if (Number.isFinite(stored.maxRecords) && stored.maxRecords > 0) {
             setMaxRecordsLimit(stored.maxRecords);
@@ -1603,6 +1667,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       condiciones,
       selectedMedId,
       maxRecords: maxRecordsLimit,
+      lotInitializationByMedId,
     };
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     persistTimeoutRef.current = setTimeout(() => {
@@ -1614,6 +1679,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       medications,
       selectedMedId,
       maxRecords: maxRecordsLimit,
+      lotInitializationByMedId,
     };
     setDocSyncInFlight(true);
     setCloudStatus('Sincronizando...');
@@ -1640,7 +1706,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       })
       .finally(() => setDocSyncInFlight(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [medications, selectedMedId, maxRecordsLimit, cloudReady, authUser, syncError]);
+  }, [medications, selectedMedId, maxRecordsLimit, lotInitializationByMedId, cloudReady, authUser, syncError]);
 
   useEffect(() => () => {
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
@@ -1819,6 +1885,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         (t) =>
           t.medId === med.id &&
           !t.isCierre &&
+          t.affectsGlobalStock !== false &&
           (closeTime === null || getTransactionTimestamp(t) > closeTime),
       );
       const stock = periodTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), baseStock);
@@ -1982,7 +2049,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     medItems.forEach((t) => {
       if (t.isCierre) {
         running = Number(t.totalMedicamento) || 0;
-      } else {
+      } else if (t.affectsGlobalStock !== false) {
         const amount = Number(t.amount) || 0;
         running += t.type === 'IN' ? amount : -amount;
       }
@@ -2152,6 +2219,76 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     );
   };
 
+  const prepareLotAllocations = async (medId, amount, excludedTransactionId = null) => {
+    if (!lotInitializationByMedId[medId]?.completed) {
+      // Migracion gradual: los medicamentos aun no conciliados mantienen el
+      // flujo historico. En cuanto uno se inicializa, FEFO se vuelve obligatorio
+      // para todas sus salidas. El bloqueo global corresponde al gate de fase 5.
+      return [];
+    }
+    setCloudStatus('Verificando lotes FEFO...');
+    const loaded = await loadAllForMed(medId);
+    if (!Array.isArray(loaded)) {
+      setCloudStatus('Sin conexion');
+      alert('No se pudo verificar el historial completo de lotes. Intente de nuevo.');
+      return null;
+    }
+    const completeTransactions = mergeTransactionsById(transactions, loaded).filter(
+      (transaction) => excludedTransactionId === null || String(transaction.id) !== String(excludedTransactionId),
+    );
+    const allocation = allocateLotsFEFO(completeTransactions, medId, amount);
+    setCloudStatus('Sincronizado');
+    if (!allocation.ok) {
+      if (allocation.code === 'INVALID_AMOUNT') {
+        alert('La cantidad de la salida debe ser un entero mayor que cero.');
+      } else {
+        alert(
+          `No hay existencias suficientes en lotes vigentes. Disponible: ${allocation.availableQuantity}; solicitado: ${allocation.requestedQuantity}. ` +
+            'Revise la inicializacion, los ingresos o los lotes vencidos.',
+        );
+      }
+      return null;
+    }
+    return allocation.allocations;
+  };
+
+  const openLotInitialization = async (medId) => {
+    if (!medId || lotInitializationByMedId[medId]?.completed) return;
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de inicializar lotes.');
+      return;
+    }
+    setCloudStatus('Verificando saldo completo...');
+    const loaded = await loadAllForMed(medId);
+    if (!Array.isArray(loaded)) {
+      setCloudStatus('Sin conexion');
+      alert('No se pudo cargar el historial completo del medicamento. Intente de nuevo.');
+      return;
+    }
+    const completeTransactions = mergeTransactionsById(transactions, loaded);
+    const targetStock = computeMedStock(completeTransactions, medId);
+    if (targetStock < 0) {
+      alert('El medicamento tiene saldo negativo. Debe corregirlo antes de inicializar lotes.');
+      return;
+    }
+    setLotInitializationMedId(medId);
+    setLotInitializationTargetStock(targetStock);
+    setLotInitializationRows(targetStock > 0 ? [{ lotNumber: '', expirationDate: '', quantity: '' }] : []);
+    setLotInitializationPharmacist(pharmacists[0] || '');
+    setModalType('lot-initialization');
+    setShowModal(true);
+    setCloudStatus('Sincronizado');
+  };
+
+  const updateLotInitializationRow = (index, field, value) => {
+    setLotInitializationRows((prev) => prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)));
+  };
+
+  const lotInitializationValidation = useMemo(
+    () => validateLotInitialization(lotInitializationRows, lotInitializationTargetStock),
+    [lotInitializationRows, lotInitializationTargetStock],
+  );
+
   // Guardia para el cierre: el total a grabar (totalMedicamento) se calcula sobre
   // los movimientos cargados. Si el historial del medicamento no esta completo,
   // ese total podria salir sobre datos parciales y corromper el ancla de saldo.
@@ -2183,18 +2320,125 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       timeZone: CR_TIMEZONE,
     });
 
-    if (modalType === 'kardex') {
+    if (modalType === 'lot-initialization') {
+      if (lotInitializationByMedId[lotInitializationMedId]?.completed || lotInitializationSaving) return;
+      const pharmacist = toUpper(formData.get('lotInitializationPharmacist'));
+      const validation = validateLotInitialization(lotInitializationRows, lotInitializationTargetStock);
+      if (!pharmacist) {
+        alert('Seleccione el farmaceutico responsable.');
+        return;
+      }
+      if (!validation.valid) {
+        alert('La distribucion no es valida. Revise lotes, fechas, cantidades y la diferencia pendiente.');
+        return;
+      }
+      const expiredRows = validation.rows.filter((row) => isLotExpired(row.expirationDate));
+      if (expiredRows.length > 0) {
+        const proceedExpired = await requestStyledConfirm(
+          `La distribucion incluye ${expiredRows.length} lote(s) vencido(s). Se registraran para trazabilidad, pero no se usaran automaticamente. ¿Desea continuar?`,
+        );
+        if (!proceedExpired) return;
+      }
+      const confirmed = await requestStyledConfirm(
+        `Confirme la inicializacion unica de ${medications.find((med) => med.id === lotInitializationMedId)?.name || lotInitializationMedId} con ${validation.total} unidades en ${validation.rows.length} lote(s).`,
+      );
+      if (!confirmed) return;
+      setLotInitializationSaving(true);
+      try {
+        const latestLoaded = await loadAllForMed(lotInitializationMedId);
+        if (!Array.isArray(latestLoaded)) throw new Error('No se pudo verificar el saldo final.');
+        const completeTransactions = mergeTransactionsById(transactions, latestLoaded);
+        const latestStock = computeMedStock(completeTransactions, lotInitializationMedId);
+        if (latestStock !== lotInitializationTargetStock) {
+          alert(`El saldo cambio de ${lotInitializationTargetStock} a ${latestStock}. Vuelva a abrir el asistente para conciliarlo.`);
+          return;
+        }
+        const groupId = `lot-init-${lotInitializationMedId}-${Date.now()}`;
+        const createdAt = Date.now();
+        const initializationTransactions = validation.rows.map((row, index) => ({
+          id: `${createdAt}-${index}`,
+          date: now,
+          createdAt: createdAt + index,
+          medId: lotInitializationMedId,
+          type: 'IN',
+          amount: row.quantity,
+          service: 'INICIALIZACION DE LOTES',
+          cama: '',
+          prescription: '',
+          dosis: '',
+          rxType: 'CERRADA',
+          rxQuantity: 0,
+          rxUsed: 0,
+          observacion: 'DISTRIBUCION INICIAL DE EXISTENCIAS; NO AFECTA EL SALDO GLOBAL',
+          pharmacist,
+          lotNumber: row.lotNumber,
+          expirationDate: row.expirationDate,
+          isLotInitialization: true,
+          affectsGlobalStock: false,
+          initializationGroupId: groupId,
+        }));
+        const completedState = {
+          completed: true,
+          completedAt: new Date().toISOString(),
+          completedBy: pharmacist,
+          targetStock: validation.target,
+          distributedQuantity: validation.total,
+          lotCount: validation.rows.length,
+          groupId,
+        };
+        const nextInitializationState = { ...lotInitializationByMedId, [lotInitializationMedId]: completedState };
+        const batch = writeBatch(db);
+        initializationTransactions.forEach((item) => {
+          batch.set(doc(db, dataDocPath, 'transactions', String(item.id)), item);
+        });
+        batch.set(doc(db, dataDocPath), { lotInitializationByMedId: nextInitializationState }, { merge: true });
+        await batch.commit();
+        setTransactions((prev) => [...initializationTransactions, ...prev]);
+        setLotInitializationByMedId(nextInitializationState);
+      } catch (error) {
+        console.error(error);
+        alert('No se pudo completar la inicializacion. No se marco el medicamento como inicializado.');
+        return;
+      } finally {
+        setLotInitializationSaving(false);
+      }
+    } else if (modalType === 'kardex') {
       const rxType = isQuickIngreso ? 'CERRADA' : formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
       const amount = parseInt(formData.get('amount'), 10) || 0;
       const medId = formData.get('medicationId');
       const prescription = isQuickIngreso ? '' : toUpper(formData.get('prescription'));
+      const lotNumber = isQuickIngreso ? toUpper(formData.get('lotNumber')) : '';
+      const expirationDate = isQuickIngreso ? String(formData.get('expirationDate') || '') : '';
+      if (isQuickIngreso) {
+        const validation = validateLotEntry({ amount, lotNumber, expirationDate });
+        if (validation.errors.includes('INVALID_AMOUNT')) {
+          alert('La cantidad del ingreso debe ser un entero mayor que cero.');
+          return;
+        }
+        if (validation.errors.includes('MISSING_LOT_NUMBER')) {
+          alert('Ingrese el numero de lote.');
+          return;
+        }
+        if (validation.errors.includes('INVALID_EXPIRATION_DATE')) {
+          alert('Ingrese una fecha de expiracion valida.');
+          return;
+        }
+        if (isLotExpired(expirationDate)) {
+          const proceed = await requestStyledConfirm(
+            `El lote ${lotNumber} ya esta vencido (${expirationDate}). ¿Desea registrar el ingreso de todos modos?`,
+          );
+          if (!proceed) return;
+        }
+      }
       const rxUsed =
         rxType === 'ABIERTA' && rxQuantity > 0 ? nextOpenRxUse(transactions, medId, prescription, rxQuantity, amount) : 0;
       if (!isQuickIngreso) {
         const proceed = await confirmIfNegativeStock(medId, amount);
         if (!proceed) return;
       }
+      const lotAllocations = isQuickIngreso ? null : await prepareLotAllocations(medId, amount);
+      if (!isQuickIngreso && !lotAllocations) return;
       const newTransaction = {
         id: Date.now(),
         date: now,
@@ -2211,6 +2455,8 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         rxUsed,
         observacion: isQuickIngreso ? '' : toUpper(formData.get('observacion')),
         pharmacist: toUpper(formData.get('pharmacist') || pharmacists[0] || ''),
+        ...(isQuickIngreso ? { lotNumber, expirationDate } : {}),
+        ...(!isQuickIngreso ? { lotAllocations } : {}),
       };
       const okKardex = enqueueWrite({ type: 'set', collection: 'transactions', id: newTransaction.id, data: newTransaction });
       if (!okKardex) {
@@ -2220,11 +2466,43 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setTransactions([newTransaction, ...transactions]);
     } else if (modalType === 'kardex-edit') {
       const current = transactions.find((t) => t.id === editingTransactionId);
-      const rxType = formData.get('rxType');
+      if (!current) {
+        alert('No se encontro el movimiento que desea editar.');
+        return;
+      }
+      const isIncome = current.type === 'IN';
+      const rxType = isIncome ? 'CERRADA' : formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
       const amount = parseInt(formData.get('amount'), 10) || 0;
       const medId = formData.get('medicationId');
-      const prescription = toUpper(formData.get('prescription'));
+      const prescription = isIncome ? '' : toUpper(formData.get('prescription'));
+      const lotNumber = isIncome ? toUpper(formData.get('lotNumber')) : '';
+      const expirationDate = isIncome ? String(formData.get('expirationDate') || '') : '';
+      if (isIncome) {
+        const validation = validateLotEntry({ amount, lotNumber, expirationDate });
+        if (validation.errors.includes('INVALID_AMOUNT')) {
+          alert('La cantidad del ingreso debe ser un entero mayor que cero.');
+          return;
+        }
+        if (validation.errors.includes('MISSING_LOT_NUMBER') || validation.errors.includes('INVALID_EXPIRATION_DATE')) {
+          alert('Ingrese un numero de lote y una fecha de expiracion validos.');
+          return;
+        }
+        const editState = getLotOriginEditState(transactions, current, { medId, amount, lotNumber, expirationDate });
+        if (!editState.allowed) {
+          const usedQuantity = editState.usedQuantity;
+          alert(`Este ingreso ya tiene ${usedQuantity} unidades asignadas a egresos. No se puede cambiar medicamento, cantidad, lote ni expiracion.`);
+          return;
+        }
+        if (isLotExpired(expirationDate) && expirationDate !== current.expirationDate) {
+          const proceed = await requestStyledConfirm(
+            `El lote ${lotNumber} ya esta vencido (${expirationDate}). ¿Desea guardar el cambio de todos modos?`,
+          );
+          if (!proceed) return;
+        }
+      }
+      const lotAllocations = isIncome ? null : await prepareLotAllocations(medId, amount, editingTransactionId);
+      if (!isIncome && !lotAllocations) return;
       const rxUsed =
         rxType !== 'ABIERTA'
           ? 0
@@ -2244,23 +2522,26 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 ),
               );
       const updated = {
+        ...current,
         id: editingTransactionId,
         // Conservar la fecha original: editar el contenido de un movimiento no
         // debe moverlo a otro periodo ni cambiar la fecha mostrada en el Kardex.
         date: current?.date || now,
         createdAt: current?.createdAt ?? parseDateTime(current?.date || now)?.getTime() ?? Date.now(),
         medId,
-        type: current?.type === 'IN' ? 'IN' : 'OUT',
+        type: isIncome ? 'IN' : 'OUT',
         amount,
-        service: toUpper(formData.get('service')),
-        cama: toUpper(formData.get('cama')),
+        service: isIncome ? 'INGRESO A INVENTARIO' : toUpper(formData.get('service')),
+        cama: isIncome ? '' : toUpper(formData.get('cama')),
         prescription,
-        dosis: toUpper(formData.get('dosis')),
+        dosis: isIncome ? '' : toUpper(formData.get('dosis')),
         rxType,
         rxQuantity,
         rxUsed,
-        observacion: toUpper(formData.get('observacion')),
+        observacion: isIncome ? '' : toUpper(formData.get('observacion')),
         pharmacist: toUpper(formData.get('pharmacist')),
+        ...(isIncome ? { lotNumber, expirationDate } : {}),
+        ...(!isIncome ? { lotAllocations } : {}),
       };
       const okKardexEdit = enqueueWrite({ type: 'set', collection: 'transactions', id: updated.id, data: updated });
       if (!okKardexEdit) {
@@ -2601,6 +2882,12 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const receta = t.prescription ? `RECETA ${t.prescription}` : 'SIN RECETA';
     return `${tipo} ${t.amount} - ${medName} (${receta}) ${t.date}`;
   };
+
+  const editingTransaction = transactions.find((t) => t.id === editingTransactionId);
+  const editingLotUsedQuantity =
+    editingTransaction?.type === 'IN'
+      ? getLotUsage(transactions, editingTransaction.medId)[String(editingTransaction.id)] || 0
+      : 0;
 
 
   if (authLoading) {
@@ -3256,10 +3543,26 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
                           </span>
                         ) : (
-                          <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                            {t.amount}
-                          </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <span
+                              className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}
+                              title={t.type === 'OUT' ? formatLotTooltip(t) : undefined}
+                              aria-label={t.type === 'OUT' ? `${t.amount} unidades. ${formatLotTooltip(t)}` : undefined}
+                            >
+                              {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                              {t.amount}
+                            </span>
+                            {t.type === 'IN' && t.lotNumber && (
+                              <span className="text-[9px] font-bold text-slate-500 uppercase">
+                                Lote {t.lotNumber} · Exp. {formatLotExpirationDate(t.expirationDate)}
+                              </span>
+                            )}
+                            {t.type === 'OUT' && Array.isArray(t.lotAllocations) && t.lotAllocations.length > 0 && (
+                              <span className="cursor-help text-[9px] font-bold uppercase text-blue-600" title={formatLotTooltip(t)}>
+                                {t.lotAllocations.length} lote(s) · ver detalle
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -3348,7 +3651,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                                 setEditingTransactionId(t.id);
                                 setModalType('kardex-edit');
                                 setRxTypeValue(t.rxType || 'CERRADA');
-                                setIsQuickIngreso(false);
+                                setIsQuickIngreso(t.type === 'IN');
                                 setShowModal(true);
                               }}
                               className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -3480,10 +3783,26 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                               {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
                             </span>
                           ) : (
-                            <span className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
-                              {t.amount}
-                            </span>
+                            <div className="flex flex-col items-center gap-1">
+                              <span
+                                className={`font-bold inline-flex items-center gap-1 ${t.type === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}
+                                title={t.type === 'OUT' ? formatLotTooltip(t) : undefined}
+                                aria-label={t.type === 'OUT' ? `${t.amount} unidades. ${formatLotTooltip(t)}` : undefined}
+                              >
+                                {t.type === 'IN' ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
+                                {t.amount}
+                              </span>
+                              {t.type === 'IN' && t.lotNumber && (
+                                <span className="text-[9px] font-bold text-slate-500 uppercase">
+                                  Lote {t.lotNumber} · Exp. {formatLotExpirationDate(t.expirationDate)}
+                                </span>
+                              )}
+                              {t.type === 'OUT' && Array.isArray(t.lotAllocations) && t.lotAllocations.length > 0 && (
+                                <span className="cursor-help text-[9px] font-bold uppercase text-blue-600" title={formatLotTooltip(t)}>
+                                  {t.lotAllocations.length} lote(s) · ver detalle
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="px-6 py-4 text-center">
@@ -3567,7 +3886,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                                   setEditingTransactionId(t.id);
                                   setModalType('kardex-edit');
                                   setRxTypeValue(t.rxType || 'CERRADA');
-                                  setIsQuickIngreso(false);
+                                  setIsQuickIngreso(t.type === 'IN');
                                   setShowModal(true);
                                 }}
                                 className="bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
@@ -3983,9 +4302,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 <button
                   type="button"
                   onClick={downloadDatabaseBackup}
-                  className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-emerald-700"
+                  disabled={backupInProgress || pendingCount > 0}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Descargar Base JSON
+                  {backupInProgress ? 'Generando respaldo...' : 'Descargar Base JSON'}
                 </button>
                 <button
                   type="button"
@@ -4025,6 +4345,46 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                     </div>
                   ))}
                   {restoreAuditLog.length === 0 && <p className="text-[10px] text-slate-400">Sin restauraciones registradas en esta sesion.</p>}
+                </div>
+              </div>
+              <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-slate-500">Inicializacion unica de lotes</p>
+                    <p className="text-xs text-slate-500 mt-1">Distribuya el saldo actual de cada medicamento antes de activar descargas FEFO.</p>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-600">
+                    {Object.values(lotInitializationByMedId).filter((item) => item?.completed).length} / {medications.length}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {sortedMedications.map((med) => {
+                    const state = lotInitializationByMedId[med.id];
+                    return (
+                      <div key={med.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-700 truncate">{med.name}</p>
+                          <p className="text-[10px] text-slate-500">
+                            {state?.completed ? `Saldo conciliado: ${state.targetStock}` : 'El saldo se verificara al abrir'}
+                          </p>
+                        </div>
+                        {state?.completed ? (
+                          <span className="text-[9px] font-bold uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                            Inicializado · {state.lotCount} lote(s)
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openLotInitialization(med.id)}
+                            disabled={pendingCount > 0}
+                            className="text-[9px] font-bold uppercase text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded px-2 py-1"
+                          >
+                            Inicializar
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
@@ -4272,10 +4632,12 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       {/* Simplified Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200">
+          <div className="bg-white rounded-xl w-full max-w-xl max-h-[90vh] shadow-2xl overflow-y-auto border border-slate-200">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-slate-800 uppercase tracking-tight text-sm">
-                {modalType === 'auditoria'
+                {modalType === 'lot-initialization'
+                  ? 'Inicializacion de Lotes'
+                  : modalType === 'auditoria'
                   ? 'Nuevo Registro de Auditoria'
                   : modalType === 'kardex'
                     ? 'Nuevo Registro de Kardex'
@@ -4330,6 +4692,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   setPendingOpenRxAdjustTransaction(null);
                   setOpenRxAmountValue('');
                   setOpenRxAdjustValue('');
+                  setLotInitializationMedId('');
+                  setLotInitializationRows([]);
+                  setLotInitializationPharmacist('');
                 }}
                 className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-slate-50"
               >
@@ -4348,7 +4713,104 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
               }
               className="p-8 space-y-4"
             >
-              {modalType === 'auditoria' || modalType === 'auditoria-edit' ? (
+              {modalType === 'lot-initialization' ? (
+                <>
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <p className="text-[10px] font-bold uppercase text-blue-700">Medicamento</p>
+                    <p className="mt-1 text-sm font-bold text-slate-800">
+                      {medications.find((med) => med.id === lotInitializationMedId)?.name || lotInitializationMedId}
+                    </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-md bg-white p-2">
+                        <p className="text-[9px] font-bold uppercase text-slate-500">Saldo</p>
+                        <p className="text-sm font-bold text-slate-800">{lotInitializationTargetStock}</p>
+                      </div>
+                      <div className="rounded-md bg-white p-2">
+                        <p className="text-[9px] font-bold uppercase text-slate-500">Distribuido</p>
+                        <p className="text-sm font-bold text-slate-800">{lotInitializationValidation.total}</p>
+                      </div>
+                      <div className="rounded-md bg-white p-2">
+                        <p className="text-[9px] font-bold uppercase text-slate-500">Diferencia</p>
+                        <p className={`text-sm font-bold ${lotInitializationValidation.difference === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {lotInitializationValidation.difference}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {lotInitializationTargetStock === 0 ? (
+                    <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                      Este medicamento no tiene saldo. Puede confirmar la inicializacion sin agregar lotes.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {lotInitializationRows.map((row, index) => (
+                        <div key={row.id || index} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-[10px] font-bold uppercase text-slate-600">Lote {index + 1}</p>
+                            <button
+                              type="button"
+                              onClick={() => setLotInitializationRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}
+                              className="text-[9px] font-bold uppercase text-rose-600 hover:text-rose-700"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                            <InputLabel
+                              label="Numero de lote"
+                              name={`initialLotNumber-${index}`}
+                              required
+                              value={row.lotNumber}
+                              onChange={(event) => updateLotInitializationRow(index, 'lotNumber', event.target.value.toUpperCase())}
+                              className="uppercase"
+                            />
+                            <InputLabel
+                              label="Expira"
+                              name={`initialExpiration-${index}`}
+                              type="date"
+                              required
+                              value={row.expirationDate}
+                              onChange={(event) => updateLotInitializationRow(index, 'expirationDate', event.target.value)}
+                            />
+                            <InputLabel
+                              label="Cantidad"
+                              name={`initialAmount-${index}`}
+                              type="number"
+                              min="1"
+                              step="1"
+                              required
+                              value={row.quantity}
+                              onChange={(event) => updateLotInitializationRow(index, 'quantity', event.target.value)}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setLotInitializationRows((rows) => [...rows, { id: crypto.randomUUID(), lotNumber: '', expirationDate: '', quantity: '' }])}
+                        className="w-full rounded-lg border border-dashed border-blue-300 py-2 text-[10px] font-bold uppercase text-blue-700 hover:bg-blue-50"
+                      >
+                        Agregar otro lote
+                      </button>
+                    </div>
+                  )}
+
+                  {!lotInitializationValidation.valid && lotInitializationValidation.errors.length > 0 && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                      {getLotInitializationErrorMessage(lotInitializationValidation.errors[0])}
+                    </div>
+                  )}
+                  <SelectLabel
+                    label="Farmaceutico responsable"
+                    name="lotInitializationPharmacist"
+                    options={pharmacists}
+                    value={lotInitializationPharmacist}
+                    onChange={(event) => setLotInitializationPharmacist(event.target.value)}
+                    required
+                  />
+                </>
+              ) : modalType === 'auditoria' || modalType === 'auditoria-edit' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <InputLabel
@@ -4638,16 +5100,39 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           label="Cantidad"
                           name="amount"
                           type="number"
+                          min="1"
+                          step="1"
                           required
-                          defaultValue={transactions.find((t) => t.id === editingTransactionId)?.amount || ''}
+                          readOnly={editingLotUsedQuantity > 0}
+                          defaultValue={editingTransaction?.amount || ''}
                         />
-                        <div />
+                        <InputLabel
+                          label="Numero de lote"
+                          name="lotNumber"
+                          required
+                          readOnly={editingLotUsedQuantity > 0}
+                          className="uppercase"
+                          defaultValue={editingTransaction?.lotNumber || ''}
+                        />
                       </div>
+                      <InputLabel
+                        label="Fecha de expiracion"
+                        name="expirationDate"
+                        type="date"
+                        required
+                        readOnly={editingLotUsedQuantity > 0}
+                        defaultValue={editingTransaction?.expirationDate || ''}
+                      />
+                      {editingLotUsedQuantity > 0 && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                          Este ingreso ya tiene {editingLotUsedQuantity} unidades asignadas. La cantidad, el medicamento, el lote y la expiracion no pueden modificarse.
+                        </div>
+                      )}
                       <SelectLabel
                         label="Farmaceutico"
                         name="pharmacist"
                         options={pharmacists}
-                        defaultValue={transactions.find((t) => t.id === editingTransactionId)?.pharmacist || pharmacists[0]}
+                        defaultValue={editingTransaction?.pharmacist || pharmacists[0]}
                         required
                       />
                     </>
@@ -4970,9 +5455,14 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 modalType !== 'sync-log' && (
                   <button
                     type="submit"
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 transition-all uppercase tracking-widest mt-4"
+                    disabled={modalType === 'lot-initialization' && (lotInitializationSaving || !lotInitializationValidation.valid || !lotInitializationPharmacist)}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 transition-all uppercase tracking-widest mt-4"
                   >
-                    Guardar Registro
+                    {modalType === 'lot-initialization'
+                      ? lotInitializationSaving
+                        ? 'Guardando...'
+                        : 'Confirmar Inicializacion'
+                      : 'Guardar Registro'}
                   </button>
                 )}
             </form>

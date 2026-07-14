@@ -92,6 +92,7 @@ export const computeMedStock = (transactions, medId) => {
     (t) =>
       t.medId === medId &&
       !t.isCierre &&
+      t.affectsGlobalStock !== false &&
       (closeTime === null || getTransactionTimestamp(t) > closeTime),
   );
   return periodTransactions.reduce(
