@@ -10,6 +10,8 @@ import {
   getDaysUntilExpiration,
   isLotExpired,
   isValidExpirationDate,
+  planLotCorrection,
+  planLotRecount,
   validateLotEntry,
   validateLotInitialization,
   validateLotAllocations,
@@ -330,6 +332,95 @@ describe('lot origin edit protection', () => {
     expect(
       getLotOriginEditState([current, use], current, { medId: MED_ID, amount: 10, lotNumber: 'a', expirationDate: '2027-05-31' }),
     ).toEqual({ usedQuantity: 3, traceabilityChanged: false, allowed: true });
+  });
+});
+
+describe('lot recount plan', () => {
+  const base = [
+    ingreso(1, 10, 'A', '2027-05-31', 100),
+    ingreso(2, 5, 'B', '2026-12-31', 200),
+    egreso(10, 4, [allocation(1, 'A', '2027-05-31', 4)]),
+  ];
+
+  it('releases every remaining lot and uses the declared rows as the new balance', () => {
+    const plan = planLotRecount(base, MED_ID, [{ lotNumber: 'c', expirationDate: '2028-03-31', quantity: 7 }], { asOf: AS_OF });
+    expect(plan.valid).toBe(true);
+    expect(plan.currentLotStock).toBe(11);
+    expect(plan.newTotal).toBe(7);
+    expect(plan.difference).toBe(-4);
+    expect(plan.rows).toEqual([{ lotNumber: 'C', expirationDate: '2028-03-31', quantity: 7 }]);
+    expect(plan.releaseAllocations).toHaveLength(2);
+    expect(plan.releaseAllocations.reduce((sum, item) => sum + item.quantity, 0)).toBe(11);
+  });
+
+  it('treats an empty recount as a valid adjustment to zero', () => {
+    const plan = planLotRecount(base, MED_ID, [], { asOf: AS_OF });
+    expect(plan.valid).toBe(true);
+    expect(plan.newTotal).toBe(0);
+    expect(plan.releaseAllocations.reduce((sum, item) => sum + item.quantity, 0)).toBe(11);
+  });
+
+  it('releases expired lots too, so they cannot survive a recount', () => {
+    const expired = [ingreso(1, 6, 'OLD', '2026-01-31', 100)];
+    const plan = planLotRecount(expired, MED_ID, [], { asOf: AS_OF });
+    expect(plan.currentLotStock).toBe(6);
+    expect(plan.releaseAllocations).toHaveLength(1);
+  });
+
+  it('rejects invalid rows and duplicated lots', () => {
+    const plan = planLotRecount(base, MED_ID, [
+      { lotNumber: 'C', expirationDate: '2028-03-31', quantity: 2 },
+      { lotNumber: 'c', expirationDate: '2028-03-31', quantity: 3 },
+      { lotNumber: '', expirationDate: '2028-03-31', quantity: 1 },
+      { lotNumber: 'D', expirationDate: '2028-02-30', quantity: 0 },
+    ], { asOf: AS_OF });
+    expect(plan.valid).toBe(false);
+    expect(plan.errors).toContain('ROW_2:DUPLICATE_LOT');
+    expect(plan.errors).toContain('ROW_3:MISSING_LOT_NUMBER');
+    expect(plan.errors).toContain('ROW_4:INVALID_AMOUNT');
+    expect(plan.errors).toContain('ROW_4:INVALID_EXPIRATION_DATE');
+  });
+});
+
+describe('lot correction plan', () => {
+  const base = [
+    ingreso(1, 10, 'A', '2027-05-31', 100),
+    egreso(10, 4, [allocation(1, 'A', '2027-05-31', 4)]),
+    egreso(11, 2, [allocation(1, 'A', '2027-05-31', 1), allocation(2, 'B', '2026-12-31', 1)]),
+    ingreso(2, 5, 'B', '2026-12-31', 200),
+  ];
+
+  it('rewrites the origin and every historical allocation snapshot', () => {
+    const plan = planLotCorrection(base, MED_ID, 1, { lotNumber: ' a-99 ', expirationDate: '2027-06-30' });
+    expect(plan.valid).toBe(true);
+    expect(plan.lotNumber).toBe('A-99');
+    expect(plan.affectedTransactions.map((item) => item.id)).toEqual([10, 11]);
+    expect(plan.affectedTransactions[1].lotAllocations).toEqual([
+      allocation(1, 'A-99', '2027-06-30', 1),
+      allocation(2, 'B', '2026-12-31', 1),
+    ]);
+  });
+
+  it('keeps the corrected origin consistent with its allocations', () => {
+    const plan = planLotCorrection(base, MED_ID, 1, { lotNumber: 'A-99', expirationDate: '2027-06-30' });
+    const corrected = base.map((item) => {
+      if (item.id === 1) return { ...item, lotNumber: plan.lotNumber, expirationDate: plan.expirationDate };
+      const patch = plan.affectedTransactions.find((entry) => entry.id === item.id);
+      return patch ? { ...item, lotAllocations: patch.lotAllocations } : item;
+    });
+    corrected
+      .filter((item) => item.type === 'OUT')
+      .forEach((item) => expect(validateLotAllocations(corrected, item).valid).toBe(true));
+  });
+
+  it('rejects unknown origins, invalid data and no-op corrections', () => {
+    expect(planLotCorrection(base, MED_ID, 99, { lotNumber: 'X', expirationDate: '2027-06-30' }).errors).toContain(
+      'UNKNOWN_LOT_ORIGIN',
+    );
+    expect(planLotCorrection(base, MED_ID, 1, { lotNumber: '', expirationDate: '2027-13-01' }).errors).toEqual(
+      expect.arrayContaining(['MISSING_LOT_NUMBER', 'INVALID_EXPIRATION_DATE']),
+    );
+    expect(planLotCorrection(base, MED_ID, 1, { lotNumber: 'A', expirationDate: '2027-05-31' }).errors).toContain('NO_CHANGES');
   });
 });
 

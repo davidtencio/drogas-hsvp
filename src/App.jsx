@@ -46,11 +46,14 @@ import {
   compareLotsFEFO,
   formatLotExpirationDate,
   formatLotTooltip,
+  getAvailableLots,
   getDaysUntilExpiration,
   getLotInventorySummary,
   getLotOriginEditState,
   getLotUsage,
   isLotExpired,
+  planLotCorrection,
+  planLotRecount,
   validateLotEntry,
   validateLotInitialization,
 } from './utils/lots';
@@ -152,6 +155,14 @@ const App = () => {
   const [lotExplorerResult, setLotExplorerResult] = useState(null);
   const [lotExplorerLoading, setLotExplorerLoading] = useState(false);
   const [lotExplorerShowDepleted, setLotExplorerShowDepleted] = useState(false);
+  const [adjustLotMode, setAdjustLotMode] = useState('recuento');
+  const [adjustLotContext, setAdjustLotContext] = useState(null);
+  const [adjustLotRows, setAdjustLotRows] = useState([]);
+  const [adjustLotLoading, setAdjustLotLoading] = useState(false);
+  const [adjustLotSaving, setAdjustLotSaving] = useState(false);
+  const [adjustCorrectionSourceId, setAdjustCorrectionSourceId] = useState('');
+  const [adjustCorrectionLotNumber, setAdjustCorrectionLotNumber] = useState('');
+  const [adjustCorrectionExpirationDate, setAdjustCorrectionExpirationDate] = useState('');
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
@@ -2375,6 +2386,304 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     }
   };
 
+  // Carga el estado real de lotes del medicamento para poder ajustarlo. Precarga
+  // el recuento con lo que hay hoy: lo normal es corregir una cantidad o una
+  // fecha puntual, no redigitar todo el inventario.
+  const loadAdjustLotContext = async (medId) => {
+    if (!medId || adjustLotLoading) return null;
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de ajustar lotes.');
+      return null;
+    }
+    setAdjustLotLoading(true);
+    setCloudStatus('Cargando existencias por lote...');
+    try {
+      const loaded = await loadAllForMed(medId);
+      if (!Array.isArray(loaded)) {
+        setCloudStatus('Sin conexion');
+        alert('No se pudo cargar el historial completo del medicamento. Intente de nuevo.');
+        return null;
+      }
+      const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+      const lots = getAvailableLots(completeTransactions, medId, { includeExpired: true });
+      const context = {
+        medId,
+        medName: medications.find((med) => med.id === medId)?.name || medId,
+        loadedAt: new Date().toISOString(),
+        globalStock: computeMedStock(completeTransactions, medId),
+        lotStock: lots.reduce((sum, lot) => sum + lot.availableQuantity, 0),
+        lots,
+      };
+      setAdjustLotContext(context);
+      setAdjustLotRows(
+        lots.map((lot) => ({
+          lotNumber: lot.lotNumber,
+          expirationDate: lot.expirationDate,
+          quantity: String(lot.availableQuantity),
+        })),
+      );
+      setAdjustCorrectionSourceId(lots[0]?.sourceTransactionId || '');
+      setAdjustCorrectionLotNumber(lots[0]?.lotNumber || '');
+      setAdjustCorrectionExpirationDate(lots[0]?.expirationDate || '');
+      setCloudStatus('Sincronizado');
+      return context;
+    } finally {
+      setAdjustLotLoading(false);
+    }
+  };
+
+  const resetAdjustLotState = () => {
+    setAdjustLotContext(null);
+    setAdjustLotRows([]);
+    setAdjustCorrectionSourceId('');
+    setAdjustCorrectionLotNumber('');
+    setAdjustCorrectionExpirationDate('');
+  };
+
+  const invalidateLotIntegrity = (medId) => {
+    setLotIntegrityAuditByMedId((previous) => {
+      if (!previous[medId]) return previous;
+      const next = { ...previous };
+      delete next[medId];
+      return next;
+    });
+  };
+
+  // Recuento fisico: la suma de los lotes declarados pasa a ser el saldo. Se
+  // escribe en un solo batch la liberacion de lo anterior, los lotes nuevos y el
+  // ancla de saldo, para que global y lotes nunca queden desalineados a medias.
+  const applyLotRecount = async () => {
+    const medId = adjustLotContext?.medId;
+    if (!medId || adjustLotSaving) return;
+    if (!lotInitializationByMedId[medId]?.completed) return;
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de ajustar lotes.');
+      return;
+    }
+    const pharmacist = toUpper(adjustPharmacist || pharmacists[0] || '');
+    if (!pharmacist) {
+      alert('Seleccione el farmaceutico responsable.');
+      return;
+    }
+    const draftPlan = planLotRecount(
+      mergeTransactionsById(transactions, []).filter((item) => item.medId === medId),
+      medId,
+      adjustLotRows,
+    );
+    if (!draftPlan.valid) {
+      alert(getLotInitializationErrorMessage(draftPlan.errors[0] || ''));
+      return;
+    }
+    const expiredRows = draftPlan.rows.filter((row) => isLotExpired(row.expirationDate));
+    if (expiredRows.length > 0) {
+      const proceedExpired = await requestStyledConfirm(
+        `El recuento incluye ${expiredRows.length} lote(s) vencido(s). Quedaran registrados para trazabilidad, pero no se usaran en egresos automaticos. ¿Desea continuar?`,
+      );
+      if (!proceedExpired) return;
+    }
+    const confirmed = await requestStyledConfirm(
+      draftPlan.rows.length === 0
+        ? `Confirme llevar ${adjustLotContext.medName} a CERO. Se liberaran ${draftPlan.currentLotStock} unidad(es) en ${draftPlan.releaseAllocations.length} lote(s) y el saldo quedara en 0.`
+        : `Confirme el recuento de ${adjustLotContext.medName}: ${draftPlan.newTotal} unidad(es) en ${draftPlan.rows.length} lote(s). El saldo pasara de ${adjustLotContext.globalStock} a ${draftPlan.newTotal}.`,
+    );
+    if (!confirmed) return;
+    const authorized = await requestSecurityKey();
+    if (!authorized) return;
+    setAdjustLotSaving(true);
+    setCloudStatus('Aplicando recuento de lotes...');
+    try {
+      // Reverificacion contra Firestore: la app esta en uso real y un egreso
+      // registrado mientras se contaba invalidaria el recuento.
+      const latestLoaded = await loadAllForMed(medId);
+      if (!Array.isArray(latestLoaded)) throw new Error('No se pudo reverificar el estado de lotes.');
+      const completeTransactions = mergeTransactionsById(transactions, latestLoaded).filter((item) => item.medId === medId);
+      const plan = planLotRecount(completeTransactions, medId, adjustLotRows);
+      const latestGlobalStock = computeMedStock(completeTransactions, medId);
+      if (!plan.valid) {
+        alert('La distribucion dejo de ser valida. Revise las filas del recuento.');
+        return;
+      }
+      if (plan.currentLotStock !== adjustLotContext.lotStock || latestGlobalStock !== adjustLotContext.globalStock) {
+        alert(
+          `El medicamento cambio mientras se contaba (saldo ${adjustLotContext.globalStock} -> ${latestGlobalStock}, lotes ${adjustLotContext.lotStock} -> ${plan.currentLotStock}). ` +
+            'Se recargaron las existencias: revise el recuento y vuelva a aplicarlo.',
+        );
+        await loadAdjustLotContext(medId);
+        return;
+      }
+      const createdAt = Date.now();
+      const now = new Date().toLocaleString('es-CR', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true,
+        timeZone: CR_TIMEZONE,
+      });
+      const groupId = `lot-adjust-${medId}-${createdAt}`;
+      const baseFields = {
+        date: now,
+        medId,
+        cama: '',
+        prescription: '',
+        dosis: '',
+        rxType: 'CERRADA',
+        rxQuantity: 0,
+        rxUsed: 0,
+        pharmacist,
+        service: 'AJUSTE MANUAL DE LOTES',
+        isLotAdjustment: true,
+        affectsGlobalStock: false,
+        adjustmentGroupId: groupId,
+      };
+      const releaseTransaction =
+        plan.currentLotStock > 0
+          ? {
+              ...baseFields,
+              id: `${createdAt}-release`,
+              createdAt,
+              type: 'OUT',
+              amount: plan.currentLotStock,
+              observacion: 'LIBERACION DE EXISTENCIAS POR RECUENTO; NO AFECTA EL SALDO GLOBAL',
+              lotAllocations: plan.releaseAllocations,
+            }
+          : null;
+      const lotTransactions = plan.rows.map((row, index) => ({
+        ...baseFields,
+        id: `${createdAt}-lot-${index}`,
+        createdAt: createdAt + index + 1,
+        type: 'IN',
+        amount: row.quantity,
+        observacion: 'EXISTENCIA DECLARADA EN RECUENTO; NO AFECTA EL SALDO GLOBAL',
+        lotNumber: row.lotNumber,
+        expirationDate: row.expirationDate,
+      }));
+      const anchorTransaction = {
+        id: createdAt + plan.rows.length + 2,
+        date: now,
+        createdAt: createdAt + plan.rows.length + 2,
+        medId,
+        type: 'IN',
+        amount: 0,
+        service: 'AJUSTE MANUAL DE SALDO',
+        cama: '',
+        prescription: '',
+        rxType: 'CERRADA',
+        rxQuantity: 0,
+        rxUsed: 0,
+        pharmacist,
+        observacion: `RECUENTO DE LOTES: ${plan.newTotal} UNIDAD(ES) EN ${plan.rows.length} LOTE(S)`,
+        isCierre: true,
+        cierreTurno: 'AJUSTE MANUAL SALDO',
+        totalRecetas: 0,
+        totalMedicamento: plan.newTotal,
+        adjustmentGroupId: groupId,
+      };
+      const written = [...(releaseTransaction ? [releaseTransaction] : []), ...lotTransactions, anchorTransaction];
+      const batch = writeBatch(db);
+      written.forEach((item) => batch.set(doc(db, dataDocPath, 'transactions', String(item.id)), item));
+      await batch.commit();
+      setTransactions((prev) => mergeTransactionsById(prev, written));
+      invalidateLotIntegrity(medId);
+      logSyncEvent('lot_recount', `medId=${medId} total=${plan.newTotal} lots=${plan.rows.length}`);
+      setCloudStatus('Sincronizado');
+      alert(`Recuento aplicado. Saldo y existencia por lotes quedaron en ${plan.newTotal}.`);
+      await loadAdjustLotContext(medId);
+    } catch (error) {
+      console.error(error);
+      setCloudStatus('Sin conexion');
+      alert('No se pudo aplicar el recuento. No se modifico nada.');
+    } finally {
+      setAdjustLotSaving(false);
+    }
+  };
+
+  // Correccion de digitacion: reescribe el origen y el snapshot que quedo en los
+  // egresos ya asignados. No mueve cantidades, por lo que no lleva ancla.
+  const applyLotCorrection = async () => {
+    const medId = adjustLotContext?.medId;
+    if (!medId || adjustLotSaving) return;
+    if (!lotInitializationByMedId[medId]?.completed) return;
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de ajustar lotes.');
+      return;
+    }
+    const draftPlan = planLotCorrection(
+      transactions.filter((item) => item.medId === medId),
+      medId,
+      adjustCorrectionSourceId,
+      { lotNumber: adjustCorrectionLotNumber, expirationDate: adjustCorrectionExpirationDate },
+    );
+    if (!draftPlan.valid) {
+      const [error] = draftPlan.errors;
+      alert(
+        error === 'NO_CHANGES'
+          ? 'No hay cambios que aplicar: el lote y la fecha son los mismos.'
+          : error === 'MISSING_LOT_NUMBER'
+            ? 'Ingrese el numero de lote corregido.'
+            : error === 'INVALID_EXPIRATION_DATE'
+              ? 'Ingrese una fecha de expiracion valida.'
+              : 'No se encontro el lote seleccionado. Recargue las existencias.',
+      );
+      return;
+    }
+    const confirmed = await requestStyledConfirm(
+      `Confirme la correccion del lote ${draftPlan.origin.lotNumber} (${formatLotExpirationDate(draftPlan.origin.expirationDate)}) a ` +
+        `${draftPlan.lotNumber} (${formatLotExpirationDate(draftPlan.expirationDate)}). ` +
+        `Se actualizaran tambien ${draftPlan.affectedTransactions.length} egreso(s) ya asignados a ese lote.`,
+    );
+    if (!confirmed) return;
+    const authorized = await requestSecurityKey();
+    if (!authorized) return;
+    setAdjustLotSaving(true);
+    setCloudStatus('Corrigiendo lote...');
+    try {
+      const latestLoaded = await loadAllForMed(medId);
+      if (!Array.isArray(latestLoaded)) throw new Error('No se pudo reverificar el lote.');
+      const completeTransactions = mergeTransactionsById(transactions, latestLoaded).filter((item) => item.medId === medId);
+      const plan = planLotCorrection(completeTransactions, medId, adjustCorrectionSourceId, {
+        lotNumber: adjustCorrectionLotNumber,
+        expirationDate: adjustCorrectionExpirationDate,
+      });
+      if (!plan.valid) {
+        alert('El lote cambio mientras se editaba. Recargue las existencias e intente de nuevo.');
+        await loadAdjustLotContext(medId);
+        return;
+      }
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, dataDocPath, 'transactions', String(plan.origin.sourceTransactionId)),
+        { lotNumber: plan.lotNumber, expirationDate: plan.expirationDate },
+        { merge: true },
+      );
+      plan.affectedTransactions.forEach((item) => {
+        batch.set(doc(db, dataDocPath, 'transactions', String(item.id)), { lotAllocations: item.lotAllocations }, { merge: true });
+      });
+      await batch.commit();
+      setTransactions((prev) =>
+        prev.map((item) => {
+          if (String(item.id) === String(plan.origin.sourceTransactionId)) {
+            return { ...item, lotNumber: plan.lotNumber, expirationDate: plan.expirationDate };
+          }
+          const patch = plan.affectedTransactions.find((entry) => String(entry.id) === String(item.id));
+          return patch ? { ...item, lotAllocations: patch.lotAllocations } : item;
+        }),
+      );
+      invalidateLotIntegrity(medId);
+      logSyncEvent('lot_correction', `medId=${medId} lot=${plan.lotNumber} touched=${plan.affectedTransactions.length}`);
+      setCloudStatus('Sincronizado');
+      alert(`Lote corregido. Se actualizaron ${plan.affectedTransactions.length} egreso(s) relacionados.`);
+      await loadAdjustLotContext(medId);
+    } catch (error) {
+      console.error(error);
+      setCloudStatus('Sin conexion');
+      alert('No se pudo corregir el lote. No se modifico nada.');
+    } finally {
+      setAdjustLotSaving(false);
+    }
+  };
+
   const openLotInitialization = async (medId) => {
     if (!medId || lotInitializationByMedId[medId]?.completed) return;
     if (pendingCount > 0) {
@@ -2406,6 +2715,11 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
   const updateLotInitializationRow = (index, field, value) => {
     setLotInitializationRows((prev) => prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)));
   };
+
+  const adjustRecountTotal = useMemo(
+    () => adjustLotRows.reduce((sum, row) => sum + (Number.parseInt(row.quantity, 10) || 0), 0),
+    [adjustLotRows],
+  );
 
   const lotInitializationValidation = useMemo(
     () => validateLotInitialization(lotInitializationRows, lotInitializationTargetStock),
@@ -4675,7 +4989,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             <div key={lot.sourceTransactionId} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
                               <div className="col-span-3 min-w-0">
                                 <p className="font-bold text-slate-800 truncate">{lot.lotNumber}</p>
-                                <p className="text-[10px] text-slate-500">{lot.isLotInitialization ? 'Carga inicial' : 'Ingreso'}</p>
+                                <p className="text-[10px] text-slate-500">
+                                  {lot.isLotInitialization ? 'Carga inicial' : lot.isLotAdjustment ? 'Ajuste manual' : 'Ingreso'}
+                                </p>
                               </div>
                               <div className="col-span-2 font-semibold text-slate-700">{formatLotExpirationDate(lot.expirationDate)}</div>
                               <div className="col-span-3">
@@ -4717,7 +5033,8 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <h3 className="font-bold text-slate-800 text-sm">Ajuste Manual de Saldo</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Permite corregir el saldo base de un medicamento. La app seguira calculando desde este ajuste.
+                Corrige el saldo base de un medicamento. En los medicamentos con lotes inicializados el ajuste tambien
+                restablece lotes y fechas de expiracion, para que saldo y trazabilidad queden cuadrados.
               </p>
               <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <SelectLabel
@@ -4726,16 +5043,21 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
                   isObject
                   value={adjustMedId}
-                  onChange={(e) => setAdjustMedId(e.target.value)}
+                  onChange={(e) => {
+                    setAdjustMedId(e.target.value);
+                    resetAdjustLotState();
+                  }}
                 />
-                <InputLabel
-                  label="Nuevo Saldo"
-                  name="adjustBalance"
-                  type="number"
-                  min="0"
-                  value={adjustBalanceValue}
-                  onChange={(e) => setAdjustBalanceValue(e.target.value)}
-                />
+                {!lotInitializationByMedId[adjustMedId]?.completed && (
+                  <InputLabel
+                    label="Nuevo Saldo"
+                    name="adjustBalance"
+                    type="number"
+                    min="0"
+                    value={adjustBalanceValue}
+                    onChange={(e) => setAdjustBalanceValue(e.target.value)}
+                  />
+                )}
                 <SelectLabel
                   label="Farmaceutico"
                   name="adjustPharmacist"
@@ -4743,19 +5065,221 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   value={adjustPharmacist}
                   onChange={(e) => setAdjustPharmacist(e.target.value)}
                 />
-                <button
-                  type="button"
-                  onClick={applyManualBalanceAdjustment}
-                  disabled={Boolean(lotInitializationByMedId[adjustMedId]?.completed)}
-                  className="bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Aplicar Ajuste
-                </button>
+                {lotInitializationByMedId[adjustMedId]?.completed ? (
+                  <button
+                    type="button"
+                    onClick={() => loadAdjustLotContext(adjustMedId)}
+                    disabled={adjustLotLoading || adjustLotSaving}
+                    className="bg-slate-900 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {adjustLotLoading ? 'Cargando...' : adjustLotContext ? 'Recargar Existencias' : 'Cargar Existencias'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={applyManualBalanceAdjustment}
+                    className="bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700"
+                  >
+                    Aplicar Ajuste
+                  </button>
+                )}
               </div>
-              {lotInitializationByMedId[adjustMedId]?.completed && (
-                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  Ajuste absoluto bloqueado: este medicamento ya utiliza lotes. Registre una entrada o salida trazable.
+              {lotInitializationByMedId[adjustMedId]?.completed && !adjustLotContext && (
+                <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  Este medicamento usa lotes. Cargue las existencias actuales para hacer un recuento o corregir un lote.
                 </p>
+              )}
+              {lotInitializationByMedId[adjustMedId]?.completed && adjustLotContext?.medId === adjustMedId && (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex gap-2">
+                      {[
+                        { key: 'recuento', label: 'Recuento de existencias' },
+                        { key: 'correccion', label: 'Corregir lote o expira' },
+                      ].map((mode) => (
+                        <button
+                          key={mode.key}
+                          type="button"
+                          onClick={() => setAdjustLotMode(mode.key)}
+                          className={`text-[10px] font-bold uppercase tracking-wider rounded-lg border px-3 py-2 ${
+                            adjustLotMode === mode.key
+                              ? 'border-slate-900 bg-slate-900 text-white'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] font-bold uppercase text-slate-500">
+                      Saldo actual {adjustLotContext.globalStock} · Lotes {adjustLotContext.lotStock}
+                    </p>
+                  </div>
+
+                  {adjustLotMode === 'recuento' && (
+                    <div className="mt-4">
+                      <p className="text-xs text-slate-500">
+                        Declare los lotes que existen fisicamente. La suma pasa a ser el saldo del medicamento y lo anterior
+                        se libera. Sin filas, el ajuste lleva el saldo a cero y no pide lote ni expiracion.
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {adjustLotRows.map((row, index) => (
+                          <div key={index} className="grid grid-cols-12 gap-2 items-end">
+                            <div className="col-span-5">
+                              <InputLabel
+                                label="Lote"
+                                name={`adjustLotNumber-${index}`}
+                                value={row.lotNumber}
+                                onInput={forceUppercaseInput}
+                                onChange={(e) =>
+                                  setAdjustLotRows((prev) =>
+                                    prev.map((item, itemIndex) =>
+                                      itemIndex === index ? { ...item, lotNumber: e.target.value.toUpperCase() } : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <InputLabel
+                                label="Expira"
+                                name={`adjustLotExpiration-${index}`}
+                                type="date"
+                                value={row.expirationDate}
+                                onChange={(e) =>
+                                  setAdjustLotRows((prev) =>
+                                    prev.map((item, itemIndex) =>
+                                      itemIndex === index ? { ...item, expirationDate: e.target.value } : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <InputLabel
+                                label="Cantidad"
+                                name={`adjustLotQuantity-${index}`}
+                                type="number"
+                                min="1"
+                                value={row.quantity}
+                                onChange={(e) =>
+                                  setAdjustLotRows((prev) =>
+                                    prev.map((item, itemIndex) =>
+                                      itemIndex === index ? { ...item, quantity: e.target.value } : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setAdjustLotRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                              className="col-span-1 h-[46px] rounded-lg border border-rose-200 bg-rose-50 text-[10px] font-bold uppercase text-rose-700 hover:bg-rose-100"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        ))}
+                        {adjustLotRows.length === 0 && (
+                          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                            Sin lotes declarados: el ajuste llevara el saldo a cero y liberara las{' '}
+                            {adjustLotContext.lotStock} unidad(es) registradas.
+                          </p>
+                        )}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAdjustLotRows((prev) => [...prev, { lotNumber: '', expirationDate: '', quantity: '' }])
+                          }
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold uppercase text-slate-600 hover:bg-slate-100"
+                        >
+                          Agregar lote
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdjustLotRows([])}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold uppercase text-slate-600 hover:bg-slate-100"
+                        >
+                          Vaciar (llevar a cero)
+                        </button>
+                        <span className="text-[10px] font-bold uppercase text-slate-500">
+                          Saldo resultante: {adjustRecountTotal} · Diferencia:{' '}
+                          <span className={adjustRecountTotal === adjustLotContext.globalStock ? 'text-slate-500' : 'text-amber-700'}>
+                            {adjustRecountTotal - adjustLotContext.globalStock > 0 ? '+' : ''}
+                            {adjustRecountTotal - adjustLotContext.globalStock}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={applyLotRecount}
+                          disabled={adjustLotSaving || adjustLotLoading}
+                          className="ml-auto bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {adjustLotSaving ? 'Aplicando...' : 'Aplicar Recuento'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {adjustLotMode === 'correccion' && (
+                    <div className="mt-4">
+                      <p className="text-xs text-slate-500">
+                        Corrige el numero de lote o la fecha de expiracion sin tocar cantidades. Los egresos ya asignados a
+                        ese lote se actualizan tambien, para que el Kardex historico no conserve el dato erroneo.
+                      </p>
+                      {adjustLotContext.lots.length === 0 ? (
+                        <p className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-500">
+                          Este medicamento no tiene lotes con existencia para corregir.
+                        </p>
+                      ) : (
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                          <div className="md:col-span-2">
+                            <SelectLabel
+                              label="Lote a corregir"
+                              name="adjustCorrectionSourceId"
+                              isObject
+                              options={adjustLotContext.lots.map((lot) => ({
+                                value: lot.sourceTransactionId,
+                                label: `${lot.lotNumber} · ${formatLotExpirationDate(lot.expirationDate)} · ${lot.availableQuantity} u`,
+                              }))}
+                              value={adjustCorrectionSourceId}
+                              onChange={(e) => {
+                                const lot = adjustLotContext.lots.find((item) => item.sourceTransactionId === e.target.value);
+                                setAdjustCorrectionSourceId(e.target.value);
+                                setAdjustCorrectionLotNumber(lot?.lotNumber || '');
+                                setAdjustCorrectionExpirationDate(lot?.expirationDate || '');
+                              }}
+                            />
+                          </div>
+                          <InputLabel
+                            label="Lote corregido"
+                            name="adjustCorrectionLotNumber"
+                            value={adjustCorrectionLotNumber}
+                            onInput={forceUppercaseInput}
+                            onChange={(e) => setAdjustCorrectionLotNumber(e.target.value.toUpperCase())}
+                          />
+                          <InputLabel
+                            label="Expira corregida"
+                            name="adjustCorrectionExpirationDate"
+                            type="date"
+                            value={adjustCorrectionExpirationDate}
+                            onChange={(e) => setAdjustCorrectionExpirationDate(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            onClick={applyLotCorrection}
+                            disabled={adjustLotSaving || adjustLotLoading}
+                            className="md:col-start-4 bg-amber-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {adjustLotSaving ? 'Aplicando...' : 'Aplicar Correccion'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

@@ -114,7 +114,7 @@ Al momento de la ultima verificacion en produccion figuraban `0 / 17` medicament
 - No inicializar un medicamento sin confirmar fisicamente todos sus lotes y expiraciones.
 - La inicializacion no se puede revertir desde la interfaz.
 - No eliminar ni editar manualmente en Firestore movimientos de inicializacion o asignaciones FEFO.
-- Mantener el modo gradual hasta cerrar los casos de reintegro, ajuste manual y anclas de inventario.
+- Mantener el modo gradual hasta cerrar los casos de reintegro y anclas de inventario. El ajuste manual ya es compatible con lotes: ver `phase-6-lot-aware-adjustment.md`.
 
 ## Archivos principales
 
