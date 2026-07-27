@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allocateLotsFEFO,
+  condenseLotsByIdentity,
   formatLotTooltip,
   getAvailableLots,
   getLotInventorySummary,
@@ -332,6 +333,37 @@ describe('lot origin edit protection', () => {
     expect(
       getLotOriginEditState([current, use], current, { medId: MED_ID, amount: 10, lotNumber: 'a', expirationDate: '2027-05-31' }),
     ).toEqual({ usedQuantity: 3, traceabilityChanged: false, allowed: true });
+  });
+});
+
+describe('lot condensation by identity', () => {
+  it('adds up the same physical lot received on different days', () => {
+    const transactions = [
+      ingreso(1, 8, 'EN042530', '2027-08-31', 100),
+      ingreso(2, 7, 'EN042530', '2027-08-31', 200),
+      ingreso(3, 3, 'EN042532', '2027-08-31', 300),
+      ingreso(4, 5, 'EN042530', '2028-01-31', 400),
+      egreso(10, 2, [allocation(1, 'EN042530', '2027-08-31', 2)]),
+    ];
+    const condensed = condenseLotsByIdentity(getAvailableLots(transactions, MED_ID, { asOf: AS_OF }));
+    expect(condensed).toEqual([
+      { lotNumber: 'EN042530', expirationDate: '2027-08-31', quantity: 13, originCount: 2 },
+      { lotNumber: 'EN042532', expirationDate: '2027-08-31', quantity: 3, originCount: 1 },
+      { lotNumber: 'EN042530', expirationDate: '2028-01-31', quantity: 5, originCount: 1 },
+    ]);
+  });
+
+  it('produces rows that planLotRecount accepts', () => {
+    const transactions = [ingreso(1, 8, 'A', '2027-08-31', 100), ingreso(2, 7, 'A', '2027-08-31', 200)];
+    const rows = condenseLotsByIdentity(getAvailableLots(transactions, MED_ID, { asOf: AS_OF }));
+    const plan = planLotRecount(transactions, MED_ID, rows, { asOf: AS_OF });
+    expect(plan.valid).toBe(true);
+    expect(plan.newTotal).toBe(15);
+    expect(plan.difference).toBe(0);
+  });
+
+  it('returns an empty list when there is nothing available', () => {
+    expect(condenseLotsByIdentity([])).toEqual([]);
   });
 });
 
