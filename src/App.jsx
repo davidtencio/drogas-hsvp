@@ -43,8 +43,10 @@ import {
 import { getBackupChecksumSource, getBackupSummary } from './utils/backup';
 import {
   allocateLotsFEFO,
+  compareLotsFEFO,
   formatLotExpirationDate,
   formatLotTooltip,
+  getDaysUntilExpiration,
   getLotInventorySummary,
   getLotOriginEditState,
   getLotUsage,
@@ -146,6 +148,10 @@ const App = () => {
   const [lotInitializationSaving, setLotInitializationSaving] = useState(false);
   const [lotIntegrityAuditByMedId, setLotIntegrityAuditByMedId] = useState({});
   const [lotIntegrityVerifying, setLotIntegrityVerifying] = useState(false);
+  const [lotExplorerMedId, setLotExplorerMedId] = useState(INITIAL_MEDICATIONS[0].id);
+  const [lotExplorerResult, setLotExplorerResult] = useState(null);
+  const [lotExplorerLoading, setLotExplorerLoading] = useState(false);
+  const [lotExplorerShowDepleted, setLotExplorerShowDepleted] = useState(false);
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
@@ -2332,6 +2338,40 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       );
     } finally {
       setLotIntegrityVerifying(false);
+    }
+  };
+
+  // Consulta de solo lectura: carga el historial COMPLETO del medicamento antes
+  // de calcular el detalle por lote. Con la carga parcial del Kardex quedarian
+  // rebajos fuera y el disponible por lote saldria inflado.
+  const loadLotExplorer = async (medId) => {
+    if (!medId || lotExplorerLoading) return;
+    setLotExplorerLoading(true);
+    setCloudStatus('Consultando lotes disponibles...');
+    try {
+      const loaded = await loadAllForMed(medId);
+      if (!Array.isArray(loaded)) {
+        setCloudStatus('Sin conexion');
+        alert('No se pudo cargar el historial completo del medicamento para listar sus lotes. Intente de nuevo.');
+        return;
+      }
+      const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+      const summary = getLotInventorySummary(completeTransactions, medId);
+      setLotExplorerResult({
+        medId,
+        medName: medications.find((med) => med.id === medId)?.name || medId,
+        consultedAt: new Date().toISOString(),
+        globalStock: computeMedStock(completeTransactions, medId),
+        initialized: Boolean(lotInitializationByMedId[medId]?.completed),
+        lots: [...summary.lots].sort(compareLotsFEFO),
+        lotCount: summary.lotCount,
+        totalAvailable: summary.totalAvailable,
+        usableAvailable: summary.usableAvailable,
+        expiredAvailable: summary.expiredAvailable,
+      });
+      setCloudStatus('Sincronizado');
+    } finally {
+      setLotExplorerLoading(false);
     }
   };
 
@@ -4551,6 +4591,128 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   onChange={(e) => setConfigMedSearch(e.target.value)}
                 />
               </div>
+            </div>
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-slate-800 text-sm">Lotes y Expiraciones Disponibles</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Consulta de solo lectura. Muestra el detalle por lote en orden FEFO con el historial completo del medicamento.
+              </p>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div className="md:col-span-2">
+                  <SelectLabel
+                    label="Medicamento"
+                    name="lotExplorerMedId"
+                    options={sortedMedications.map((m) => ({ value: m.id, label: m.name }))}
+                    isObject
+                    value={lotExplorerMedId}
+                    onChange={(e) => {
+                      setLotExplorerMedId(e.target.value);
+                      setLotExplorerResult(null);
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadLotExplorer(lotExplorerMedId)}
+                  disabled={lotExplorerLoading}
+                  className="bg-blue-600 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {lotExplorerLoading ? 'Consultando...' : 'Consultar Lotes'}
+                </button>
+                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-slate-600 pb-3">
+                  <input
+                    type="checkbox"
+                    checked={lotExplorerShowDepleted}
+                    onChange={(e) => setLotExplorerShowDepleted(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  Incluir agotados
+                </label>
+              </div>
+              {lotExplorerResult && lotExplorerResult.medId === lotExplorerMedId && (
+                <div className="mt-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {[
+                      { label: 'Saldo global', value: lotExplorerResult.globalStock, tone: 'text-slate-800' },
+                      { label: 'Total en lotes', value: lotExplorerResult.totalAvailable, tone: lotExplorerResult.totalAvailable === lotExplorerResult.globalStock ? 'text-emerald-700' : 'text-rose-700' },
+                      { label: 'Vigente', value: lotExplorerResult.usableAvailable, tone: 'text-emerald-700' },
+                      { label: 'Vencido', value: lotExplorerResult.expiredAvailable, tone: lotExplorerResult.expiredAvailable > 0 ? 'text-rose-700' : 'text-slate-800' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase text-slate-500">{item.label}</p>
+                        <p className={`text-sm font-bold ${item.tone}`}>{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    {lotExplorerResult.medName} · {lotExplorerResult.lotCount} lote(s) con existencia · consultado{' '}
+                    {new Date(lotExplorerResult.consultedAt).toLocaleString('es-CR')}
+                  </p>
+                  {lotExplorerResult.totalAvailable !== lotExplorerResult.globalStock && (
+                    <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                      El saldo global ({lotExplorerResult.globalStock}) no coincide con la existencia por lotes (
+                      {lotExplorerResult.totalAvailable}).
+                      {lotExplorerResult.initialized
+                        ? ' Revise la integridad del medicamento.'
+                        : ' Este medicamento aun no esta inicializado, por lo que solo se contabilizan los ingresos con lote.'}
+                    </p>
+                  )}
+                  <div className="mt-3 rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 grid grid-cols-12 gap-2">
+                      <div className="col-span-3">Lote</div>
+                      <div className="col-span-2">Expira</div>
+                      <div className="col-span-3">Estado</div>
+                      <div className="col-span-2 text-right">Recibido / Usado</div>
+                      <div className="col-span-2 text-right">Disponible</div>
+                    </div>
+                    <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                      {lotExplorerResult.lots
+                        .filter((lot) => lotExplorerShowDepleted || lot.availableQuantity > 0)
+                        .map((lot) => {
+                          const daysLeft = getDaysUntilExpiration(lot.expirationDate);
+                          const expiringSoon = !lot.expired && daysLeft !== null && daysLeft <= 90;
+                          return (
+                            <div key={lot.sourceTransactionId} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
+                              <div className="col-span-3 min-w-0">
+                                <p className="font-bold text-slate-800 truncate">{lot.lotNumber}</p>
+                                <p className="text-[10px] text-slate-500">{lot.isLotInitialization ? 'Carga inicial' : 'Ingreso'}</p>
+                              </div>
+                              <div className="col-span-2 font-semibold text-slate-700">{formatLotExpirationDate(lot.expirationDate)}</div>
+                              <div className="col-span-3">
+                                <span
+                                  className={`text-[9px] font-bold uppercase rounded border px-2 py-1 ${
+                                    lot.expired
+                                      ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                      : expiringSoon
+                                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  }`}
+                                >
+                                  {lot.expired
+                                    ? `Vencido hace ${Math.abs(daysLeft ?? 0)} d`
+                                    : daysLeft === 0
+                                      ? 'Vence hoy'
+                                      : `Vence en ${daysLeft} d`}
+                                </span>
+                              </div>
+                              <div className="col-span-2 text-right text-slate-600">
+                                {lot.receivedQuantity} / {lot.usedQuantity}
+                              </div>
+                              <div className={`col-span-2 text-right font-bold ${lot.availableQuantity > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
+                                {lot.availableQuantity}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      {lotExplorerResult.lots.filter((lot) => lotExplorerShowDepleted || lot.availableQuantity > 0).length === 0 && (
+                        <p className="px-3 py-4 text-[10px] text-slate-400">
+                          Este medicamento no tiene lotes con trazabilidad registrada.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <h3 className="font-bold text-slate-800 text-sm">Ajuste Manual de Saldo</h3>

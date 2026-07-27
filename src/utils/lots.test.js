@@ -7,6 +7,7 @@ import {
   getLotOriginEditState,
   getLotOrigins,
   getLotUsage,
+  getDaysUntilExpiration,
   isLotExpired,
   isValidExpirationDate,
   validateLotEntry,
@@ -55,6 +56,13 @@ describe('lot dates', () => {
   it('keeps a lot valid through its expiration day', () => {
     expect(isLotExpired('2026-07-13', AS_OF)).toBe(false);
     expect(isLotExpired('2026-07-12', AS_OF)).toBe(true);
+  });
+
+  it('counts calendar days to the expiration date', () => {
+    expect(getDaysUntilExpiration('2026-07-13', AS_OF)).toBe(0);
+    expect(getDaysUntilExpiration('2026-07-12', AS_OF)).toBe(-1);
+    expect(getDaysUntilExpiration('2026-10-11', AS_OF)).toBe(90);
+    expect(getDaysUntilExpiration('31/05/2027', AS_OF)).toBeNull();
   });
 });
 

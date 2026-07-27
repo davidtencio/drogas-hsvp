@@ -75,6 +75,19 @@ export const isLotExpired = (expirationDate, asOf = new Date()) => {
   return !referenceDate || expirationDate < referenceDate;
 };
 
+// Dias calendario que faltan para la expiracion. Cero significa que vence hoy
+// (todavia vigente segun isLotExpired) y los negativos ya estan vencidos.
+export const getDaysUntilExpiration = (expirationDate, asOf = new Date()) => {
+  if (!isValidExpirationDate(expirationDate)) return null;
+  const referenceKey = toDateKey(asOf);
+  if (!referenceKey) return null;
+  const [expirationYear, expirationMonth, expirationDay] = expirationDate.split('-').map(Number);
+  const [referenceYear, referenceMonth, referenceDay] = referenceKey.split('-').map(Number);
+  const expiration = Date.UTC(expirationYear, expirationMonth - 1, expirationDay);
+  const reference = Date.UTC(referenceYear, referenceMonth - 1, referenceDay);
+  return Math.round((expiration - reference) / 86400000);
+};
+
 export const getLotOrigins = (transactions, medId) =>
   (transactions || [])
     .filter(
