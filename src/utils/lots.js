@@ -106,6 +106,7 @@ export const getLotOrigins = (transactions, medId) =>
       receivedQuantity: Number(item.amount),
       createdAt: getTransactionTimestamp(item),
       isLotInitialization: Boolean(item.isLotInitialization),
+      isLotAdjustment: Boolean(item.isLotAdjustment),
     }));
 
 export const getLotUsage = (transactions, medId) => {
@@ -257,6 +258,100 @@ export const validateLotAllocations = (transactions, transaction) => {
     }
   });
   return { valid: errors.length === 0, errors: Array.from(new Set(errors)) };
+};
+
+// Recuento fisico de un medicamento ya inicializado. La suma de las filas ES el
+// saldo nuevo: no se digita aparte. Devuelve ademas las asignaciones que liberan
+// TODA la existencia por lote vigente, porque un ancla de saldo corta el calculo
+// global por tiempo pero los origenes de lote se acumulan sobre toda la historia:
+// sin esa liberacion los lotes viejos seguirian contando y el ajuste descuadraria.
+// Un recuento sin filas es el ajuste a cero y es valido: no exige lote ni fecha.
+export const planLotRecount = (transactions, medId, rows, { asOf = new Date() } = {}) => {
+  const errors = [];
+  const normalizedRows = [];
+  const seen = new Set();
+  (rows || []).forEach((row, index) => {
+    const validation = validateLotEntry({
+      amount: row?.quantity,
+      lotNumber: row?.lotNumber,
+      expirationDate: row?.expirationDate,
+    });
+    if (!validation.valid) {
+      validation.errors.forEach((error) => errors.push(`ROW_${index + 1}:${error}`));
+      return;
+    }
+    const normalized = {
+      lotNumber: validation.normalized.lotNumber,
+      expirationDate: validation.normalized.expirationDate,
+      quantity: validation.normalized.amount,
+    };
+    const key = `${normalized.lotNumber}|${normalized.expirationDate}`;
+    if (seen.has(key)) errors.push(`ROW_${index + 1}:DUPLICATE_LOT`);
+    seen.add(key);
+    normalizedRows.push(normalized);
+  });
+  const currentLots = getAvailableLots(transactions, medId, { asOf, includeExpired: true });
+  const currentLotStock = currentLots.reduce((sum, lot) => sum + lot.availableQuantity, 0);
+  const newTotal = normalizedRows.reduce((sum, row) => sum + row.quantity, 0);
+  return {
+    valid: errors.length === 0,
+    errors: Array.from(new Set(errors)),
+    rows: normalizedRows,
+    newTotal,
+    currentLotStock,
+    difference: newTotal - currentLotStock,
+    releaseAllocations: currentLots.map((lot) => ({
+      sourceTransactionId: lot.sourceTransactionId,
+      lotNumber: lot.lotNumber,
+      expirationDate: lot.expirationDate,
+      quantity: lot.availableQuantity,
+    })),
+  };
+};
+
+// Correccion de digitacion de un lote: cambia numero y/o fecha sin tocar
+// cantidades, por lo que no altera el saldo global. Los egresos guardaron una
+// copia del lote en lotAllocations, asi que devuelve tambien esos movimientos ya
+// reescritos; de lo contrario el historico conservaria el dato erroneo y
+// validateLotAllocations lo marcaria como LOT_SNAPSHOT_MISMATCH.
+export const planLotCorrection = (transactions, medId, sourceTransactionId, { lotNumber, expirationDate } = {}) => {
+  const errors = [];
+  const sourceId = String(sourceTransactionId || '');
+  const origin = getLotOrigins(transactions, medId).find((item) => item.sourceTransactionId === sourceId) || null;
+  const nextLotNumber = lotNumber?.toString().trim().toUpperCase() || '';
+  const nextExpirationDate = expirationDate?.toString() || '';
+  if (!origin) errors.push('UNKNOWN_LOT_ORIGIN');
+  if (!nextLotNumber) errors.push('MISSING_LOT_NUMBER');
+  if (!isValidExpirationDate(nextExpirationDate)) errors.push('INVALID_EXPIRATION_DATE');
+  if (origin && origin.lotNumber === nextLotNumber && origin.expirationDate === nextExpirationDate) {
+    errors.push('NO_CHANGES');
+  }
+  const affectedTransactions =
+    errors.length > 0
+      ? []
+      : (transactions || [])
+          .filter(
+            (item) =>
+              item?.medId === medId &&
+              item?.type === 'OUT' &&
+              (item.lotAllocations || []).some((allocation) => String(allocation?.sourceTransactionId) === sourceId),
+          )
+          .map((item) => ({
+            id: item.id,
+            lotAllocations: item.lotAllocations.map((allocation) =>
+              String(allocation?.sourceTransactionId) === sourceId
+                ? { ...allocation, lotNumber: nextLotNumber, expirationDate: nextExpirationDate }
+                : allocation,
+            ),
+          }));
+  return {
+    valid: errors.length === 0,
+    errors: Array.from(new Set(errors)),
+    origin,
+    lotNumber: nextLotNumber,
+    expirationDate: nextExpirationDate,
+    affectedTransactions,
+  };
 };
 
 export const formatLotExpirationDate = (value) => {
