@@ -260,6 +260,33 @@ export const validateLotAllocations = (transactions, transaction) => {
   return { valid: errors.length === 0, errors: Array.from(new Set(errors)) };
 };
 
+// Agrupa los origenes por lote fisico (numero + expiracion) sumando lo
+// disponible. El motor rastrea un origen por ingreso, pero en el estante un
+// mismo lote ingresado en varias fechas es UN solo lote: el recuento se declara
+// asi, y ademas planLotRecount rechaza filas repetidas con la misma llave.
+export const condenseLotsByIdentity = (lots) => {
+  const condensed = [];
+  const indexByKey = new Map();
+  (lots || []).forEach((lot) => {
+    const key = `${lot?.lotNumber}|${lot?.expirationDate}`;
+    const existing = indexByKey.get(key);
+    const quantity = Number(lot?.availableQuantity) || 0;
+    if (existing !== undefined) {
+      condensed[existing].quantity += quantity;
+      condensed[existing].originCount += 1;
+      return;
+    }
+    indexByKey.set(key, condensed.length);
+    condensed.push({
+      lotNumber: lot?.lotNumber,
+      expirationDate: lot?.expirationDate,
+      quantity,
+      originCount: 1,
+    });
+  });
+  return condensed;
+};
+
 // Recuento fisico de un medicamento ya inicializado. La suma de las filas ES el
 // saldo nuevo: no se digita aparte. Devuelve ademas las asignaciones que liberan
 // TODA la existencia por lote vigente, porque un ancla de saldo corta el calculo

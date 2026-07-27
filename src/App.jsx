@@ -44,6 +44,7 @@ import { getBackupChecksumSource, getBackupSummary } from './utils/backup';
 import {
   allocateLotsFEFO,
   compareLotsFEFO,
+  condenseLotsByIdentity,
   formatLotExpirationDate,
   formatLotTooltip,
   getAvailableLots,
@@ -2406,6 +2407,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       }
       const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
       const lots = getAvailableLots(completeTransactions, medId, { includeExpired: true });
+      // El recuento se declara por lote fisico: un mismo lote ingresado en varias
+      // fechas es una sola fila. Los origenes sin condensar quedan en `lots` para
+      // la correccion, que si apunta a un ingreso puntual.
+      const condensedLots = condenseLotsByIdentity(lots);
       const context = {
         medId,
         medName: medications.find((med) => med.id === medId)?.name || medId,
@@ -2413,13 +2418,14 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         globalStock: computeMedStock(completeTransactions, medId),
         lotStock: lots.reduce((sum, lot) => sum + lot.availableQuantity, 0),
         lots,
+        condensedCount: condensedLots.length,
       };
       setAdjustLotContext(context);
       setAdjustLotRows(
-        lots.map((lot) => ({
+        condensedLots.map((lot) => ({
           lotNumber: lot.lotNumber,
           expirationDate: lot.expirationDate,
-          quantity: String(lot.availableQuantity),
+          quantity: String(lot.quantity),
         })),
       );
       setAdjustCorrectionSourceId(lots[0]?.sourceTransactionId || '');
@@ -5122,6 +5128,12 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                         Declare los lotes que existen fisicamente. La suma pasa a ser el saldo del medicamento y lo anterior
                         se libera. Sin filas, el ajuste lleva el saldo a cero y no pide lote ni expiracion.
                       </p>
+                      {adjustLotContext.lots.length > adjustLotContext.condensedCount && (
+                        <p className="mt-2 text-[10px] font-semibold uppercase text-slate-500">
+                          {adjustLotContext.lots.length} ingreso(s) agrupados en {adjustLotContext.condensedCount} lote(s)
+                          fisico(s) por numero y expiracion
+                        </p>
+                      )}
                       <div className="mt-3 space-y-2">
                         {adjustLotRows.map((row, index) => (
                           <div key={index} className="grid grid-cols-12 gap-2 items-end">
