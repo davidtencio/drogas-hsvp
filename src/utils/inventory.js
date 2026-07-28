@@ -81,6 +81,57 @@ export const getLastBalanceAnchor = (items, medId) =>
     .filter((t) => t.medId === medId && t.isCierre)
     .sort(compareTransactionsDesc)[0];
 
+// Turno de cierre que congela el historial. Solo el cierre de 24 horas corta el
+// periodo contable; los cierres de turno (primero, segundo, tercero) no bloquean.
+export const CLOSURE_24H_TURNO = 'CIERRE 24 HORAS';
+
+export const isClosure24h = (t) => Boolean(t?.isCierre) && t?.cierreTurno === CLOSURE_24H_TURNO;
+
+// Mapa medId -> timestamp del ultimo CIERRE 24 HORAS de ese medicamento.
+// Ese timestamp es el "cutoff" del medicamento: todo movimiento suyo con
+// timestamp <= cutoff queda congelado (no se puede editar ni eliminar).
+// El bloqueo es POR MEDICAMENTO: cerrar FENTANYL no congela MORFINA.
+export const getClosureCutoffByMedId = (transactions) => {
+  const map = {};
+  (transactions || []).forEach((t) => {
+    if (!t?.medId || !isClosure24h(t)) return;
+    const ts = getTransactionTimestamp(t);
+    if (!Number.isFinite(ts)) return;
+    if (map[t.medId] === undefined || ts > map[t.medId]) map[t.medId] = ts;
+  });
+  return map;
+};
+
+// Fusiona los cutoffs calculados desde los movimientos en memoria con los
+// persistidos en Firestore (coleccion closureLocks). Se queda con el mayor de
+// los dos: la ventana de movimientos cargados puede no incluir un cierre viejo,
+// y en ese caso el valor persistido es el unico que conoce el corte real.
+export const mergeClosureCutoffs = (computed, stored) => {
+  const merged = { ...(computed || {}) };
+  Object.entries(stored || {}).forEach(([medId, value]) => {
+    const cutoff = Number(value);
+    if (!Number.isFinite(cutoff)) return;
+    if (merged[medId] === undefined || cutoff > merged[medId]) merged[medId] = cutoff;
+  });
+  return merged;
+};
+
+// Un movimiento esta congelado si su medicamento tiene un cierre de 24 horas
+// con timestamp mayor o igual al suyo. La comparacion es <= (y no <) a proposito:
+// asi el cierre mismo queda incluido y tampoco se puede borrar, que es lo que
+// protege el ancla de saldo.
+export const isTransactionLocked = (t, cutoffByMedId) => {
+  if (!t?.medId) return false;
+  const cutoff = cutoffByMedId?.[t.medId];
+  if (!Number.isFinite(cutoff)) return false;
+  return getTransactionTimestamp(t) <= cutoff;
+};
+
+// Cuantos movimientos congelados tiene un medicamento. Se usa para explicarle
+// al usuario por que no puede eliminarlo.
+export const countLockedTransactions = (transactions, medId, cutoffByMedId) =>
+  (transactions || []).filter((t) => t?.medId === medId && isTransactionLocked(t, cutoffByMedId)).length;
+
 // Calcula el stock actual de un medicamento: parte de la ultima ancla de saldo
 // y suma/resta los movimientos posteriores a ella. Misma logica que el inventario
 // que se muestra en pantalla. Devuelve un entero (puede ser negativo).
