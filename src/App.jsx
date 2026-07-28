@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Filter,
   History,
   Bell,
+  Lock,
   Package,
   PlusCircle,
   Search,
@@ -39,6 +40,12 @@ import {
   computeMedStock,
   formatCurrency,
   parseCurrency,
+  CLOSURE_24H_TURNO,
+  isClosure24h,
+  getClosureCutoffByMedId,
+  mergeClosureCutoffs,
+  isTransactionLocked,
+  countLockedTransactions,
 } from './utils/inventory';
 import { getBackupChecksumSource, getBackupSummary } from './utils/backup';
 import {
@@ -72,6 +79,23 @@ const INITIAL_MEDICATIONS = [
 const INITIAL_SERVICES = ['EMERGENCIAS', 'MEDICINA', 'CIRUGIA', 'PEDIATRIA', 'UCI', 'CLINICA DEL DOLOR'];
 const INITIAL_PHARMACISTS = ['2492 ESTHER HERNANDEZ', '2488 VIVIANA ESQUIVEL', '3632 GINNETTE MONTERO', '4511 JEANNETTE SALAZAR'];
 const INITIAL_CONDICIONES = ['VALIDACION', 'INCONSISTENTE', 'SUSPENDIDA', 'EGRESO'];
+
+const CLOSURE_LOCK_HINT =
+  'Movimiento anterior a un CIERRE 24 HORAS: el periodo esta cerrado y el dato es inmutable.';
+
+// Unicos campos que se pueden escribir sobre un movimiento ya congelado por un
+// CIERRE 24 HORAS: anotaciones posteriores que no alteran cantidades ni saldos
+// (verificacion cruzada y seguimiento de recetas abiertas). Debe mantenerse en
+// sincronia con la lista equivalente de firestore.rules.
+const CLOSURE_EDITABLE_FIELDS = [
+  'crossCheckPharmacist',
+  'crossCheckedAt',
+  'rxUsed',
+  'rxAdjusted',
+  'rxAdjustedAt',
+  'rxAdjustedBy',
+  'rxAdjustedFrom',
+];
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
 const CR_TIMEZONE = 'America/Costa_Rica';
@@ -165,6 +189,10 @@ const App = () => {
   const [adjustCorrectionLotNumber, setAdjustCorrectionLotNumber] = useState('');
   const [adjustCorrectionExpirationDate, setAdjustCorrectionExpirationDate] = useState('');
   const [totalTransactionsCount, setTotalTransactionsCount] = useState(0);
+  // Cortes de cierre persistidos en Firestore (coleccion closureLocks): medId -> timestamp.
+  // Son la fuente que tambien leen las reglas de seguridad; en pantalla se fusionan
+  // con los cierres que esten cargados en memoria.
+  const [closureLocksByMedId, setClosureLocksByMedId] = useState({});
   const [docSyncInFlight, setDocSyncInFlight] = useState(false);
   const [queueOverflow, setQueueOverflow] = useState(false);
   const [writeBlockedByStorage, setWriteBlockedByStorage] = useState(false);
@@ -251,6 +279,12 @@ const App = () => {
   const [medLoadStatus, setMedLoadStatus] = useState({}); // 'loading' | 'complete' | 'error'
   const medLoadInFlightRef = useRef({});
   const pendingWritesRef = useRef([]);
+  // Cortes de CIERRE 24 HORAS ya publicados en Firestore por el efecto de
+  // retrocompatibilidad, y bandera para silenciarlo mientras el cierre de periodo
+  // o una restauracion estan liberando candados (si volviera a publicarlos, las
+  // reglas rechazarian el borrado del historial que esas operaciones deben purgar).
+  const closureLockSyncRef = useRef({});
+  const suppressClosureLockSyncRef = useRef(false);
   const isFlushingRef = useRef(false);
   const retryTimeoutRef = useRef(null);
   const persistTimeoutRef = useRef(null);
@@ -505,6 +539,7 @@ Toda la informacion se sincroniza en la nube (Firebase) bajo la organizacion del
 - **Kardex**: historial cronologico de movimientos de un medicamento, separado en Recientes e Historico segun la fecha.
 - **Expediente / Receta**: respaldo clinico que justifica un egreso. Una receta puede estar abierta (en uso) o cerrada.
 - **Cierre**: corte que consolida el inventario en un punto del tiempo.
+- **Cierre 24 Horas**: cierre que ademas CIERRA EL PERIODO del medicamento. Todos sus movimientos anteriores (y el cierre mismo) quedan inmutables: no se pueden editar ni eliminar. El bloqueo es por medicamento, y lo posterior sigue siendo editable hasta el proximo cierre de 24 horas.
 - **Farmaceutico**: responsable que firma cada operacion.
 
 ## 3. Modulos de la aplicacion
@@ -514,6 +549,8 @@ Vista general del estado del inventario: indicadores de uso, alertas y resumen d
 
 ### 3.2 Kardex Individual (Kardex de Sustancias Controladas)
 Historial detallado por medicamento. Muestra cada ingreso y egreso con fecha, cantidad, saldo resultante y farmaceutico responsable. Los registros se clasifican en **Recientes** e **Historico** segun su fecha visible. Se usa para auditar el movimiento de una sustancia especifica y verificar que el saldo cuadre.
+
+Los movimientos alcanzados por un **CIERRE 24 HORAS** aparecen marcados como **CERRADO** con un candado y ya no ofrecen los botones Editar ni Eliminar: pertenecen a un periodo cerrado. Si hay que corregir algo de un periodo cerrado, se registra un movimiento nuevo o un ajuste de saldo en el periodo abierto; el historial cerrado no se reescribe. Sobre esos movimientos si se puede dejar el control cruzado y el seguimiento de recetas abiertas, porque son anotaciones que no alteran cantidades ni saldos.
 
 ### 3.3 Revisiones (Auditoria de Expedientes)
 Validacion farmacoterapeutica: cruza los egresos contra los expedientes/recetas para confirmar que cada salida de sustancia controlada tenga respaldo. Permite detectar descuadres o registros sin justificacion.
@@ -644,6 +681,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
 
 - Los ingresos aumentan el inventario y los egresos lo disminuyen.
 - Los cierres y ajustes de saldo son anclas de inventario; su cantidad representa el saldo consolidado, no una entrada ni una salida.
+- Un CIERRE 24 HORAS cierra el periodo del medicamento: los movimientos hasta esa fecha son inmutables y no pueden haber sido alterados despues.
 - Este archivo Markdown esta estructurado para utilizarse como fuente en NotebookLM.
 `;
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
@@ -656,6 +694,29 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+  // El cierre de periodo y la restauracion reconstruyen la base completa, asi que
+  // necesitan purgar tambien historial cerrado. Para poder hacerlo liberan antes
+  // los candados, dejando registrado el motivo y la fecha (las reglas de Firestore
+  // exigen esos campos para aceptar que un corte baje).
+  const resetClosureLocks = async (reason) => {
+    suppressClosureLockSyncRef.current = true;
+    const snap = await getDocs(collection(db, dataDocPath, 'closureLocks'));
+    if (!snap.empty) {
+      const batch = writeBatch(db);
+      snap.docs.forEach((docSnap) => {
+        batch.set(
+          docSnap.ref,
+          { cutoff: 0, reset: true, resetReason: reason, resetAt: Date.now() },
+          { merge: true },
+        );
+      });
+      await batch.commit();
+    }
+    closureLockSyncRef.current = {};
+    setClosureLocksByMedId({});
+    logSyncEvent('closure_locks_reset', reason);
+  };
+
   const restoreDatabaseBackup = async (file) => {
     if (!file || !authUser) return;
     setCloudStatus('Restaurando...');
@@ -740,6 +801,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         }
       };
 
+      // La restauracion reemplaza la base entera, incluido el historial cerrado:
+      // libera los candados para poder borrarlo. Los cierres que traiga el respaldo
+      // vuelven a publicar su propio corte al cargarse.
+      await resetClosureLocks(`restauracion:${file.name}`);
       await batchDeleteByList('transactions', transactions);
       await batchDeleteByList('expedientes', expedientes);
       await batchDeleteByList('bitacora', bitacora);
@@ -797,6 +862,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setCloudStatus('Sin conexion');
       alert('No se pudo restaurar el archivo JSON.');
     } finally {
+      // Se rehabilita la publicacion de candados: los cierres que traiga el
+      // respaldo restaurado deben volver a establecer su propio corte.
+      suppressClosureLockSyncRef.current = false;
       if (restoreInputRef.current) restoreInputRef.current.value = '';
     }
   };
@@ -962,6 +1030,23 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     setTransactions([newTransaction, ...transactions]);
   };
 
+  // Un movimiento congelado admite unicamente anotaciones que no alteran
+  // cantidades ni saldos: la verificacion cruzada y el seguimiento de recetas
+  // abiertas. Cualquier otro campo (amount, medId, lote, fecha, totalMedicamento)
+  // queda bloqueado. Esta lista debe coincidir con la de firestore.rules.
+  const getChangedFields = (before, patch) =>
+    Object.keys(patch || {}).filter(
+      (key) => JSON.stringify(before?.[key]) !== JSON.stringify(patch[key]),
+    );
+
+  const notifyClosureLocked = (label) => {
+    alert(
+      `No se puede ${label}.\n\n` +
+      'El movimiento es anterior a un CIERRE 24 HORAS y el periodo ya esta cerrado.\n' +
+      'Los datos cerrados son inmutables: registre un movimiento nuevo o un ajuste de saldo.',
+    );
+  };
+
   const notifyWriteFailed = (label) => {
     alert(
       `No se pudo guardar ${label || 'el registro'}.\n\n` +
@@ -975,6 +1060,27 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setSyncError('Escritura bloqueada: libere espacio local o sincronice pendientes.');
       logSyncEvent('enqueue_blocked', `${action.collection}/${action.id}`);
       return false;
+    }
+    // Inmutabilidad del periodo cerrado. Se valida aqui, y no solo ocultando
+    // botones, porque enqueueWrite es el paso obligatorio de toda escritura:
+    // asi ninguna ruta de la app puede tocar un movimiento congelado por error.
+    if (action.collection === 'transactions') {
+      const existing = transactions.find((t) => String(t.id) === String(action.id));
+      // Si el movimiento aun no existe es un alta: nunca esta congelado.
+      if (existing && isLockedTransaction(existing)) {
+        if (action.type === 'delete') {
+          logSyncEvent('closure_locked', `delete transactions/${action.id}`);
+          notifyClosureLocked('eliminar este movimiento');
+          return false;
+        }
+        const changed = getChangedFields(existing, action.data);
+        const forbidden = changed.filter((key) => !CLOSURE_EDITABLE_FIELDS.includes(key));
+        if (forbidden.length > 0) {
+          logSyncEvent('closure_locked', `set transactions/${action.id} campos=${forbidden.join(',')}`);
+          notifyClosureLocked('modificar este movimiento');
+          return false;
+        }
+      }
     }
     const enriched = { ...action, opId: action.opId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
     const next = [...(pendingWritesRef.current || []), enriched];
@@ -1328,6 +1434,21 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           loadCatalogCollection('catalog_pharmacists', setPharmacists, legacyPharmacists),
           loadCatalogCollection('catalog_condiciones', setCondiciones, legacyCondiciones),
         ]);
+        // Cortes de CIERRE 24 HORAS. Se cargan completos (uno por medicamento) para
+        // que el bloqueo funcione aunque el cierre no entre en la ventana inicial
+        // de movimientos: sin esto, un cierre viejo pasaria desapercibido en pantalla.
+        try {
+          const locksSnap = await getDocs(collection(db, dataDocPath, 'closureLocks'));
+          const locks = {};
+          locksSnap.docs.forEach((docSnap) => {
+            const data = docSnap.data();
+            const cutoff = Number(data?.cutoff);
+            if (Number.isFinite(cutoff)) locks[data?.medId || docSnap.id] = cutoff;
+          });
+          if (!cancelled) setClosureLocksByMedId(locks);
+        } catch (error) {
+          console.error('No se pudieron cargar los cierres de 24 horas', error);
+        }
         const knownMedIds = new Set(loadedMedications.map((m) => m.id));
         const missingMedIds = Array.from(
           new Set(
@@ -1861,6 +1982,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         }
       };
 
+      // El respaldo ya se descargo arriba: recien ahi se liberan los candados de
+      // CIERRE 24 HORAS, que es lo que permite purgar tambien el historial cerrado.
+      await resetClosureLocks('cierre_periodo');
       await batchDelete('transactions', transactions);
       await batchDelete('expedientes', expedientes);
       await batchDelete('bitacora', bitacora);
@@ -1882,6 +2006,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       console.error(error);
       alert('Error durante el cierre de periodo. Por favor revise la consola y reporte al administrador.');
     } finally {
+      // Tras la purga los saldos de arrastre son posteriores a cualquier corte, asi
+      // que rehabilitar la publicacion de candados no vuelve a congelar nada. Importa
+      // sobre todo en la rama de error, donde no hay recarga de pagina.
+      suppressClosureLockSyncRef.current = false;
       setCloudStatus('Sincronizado');
     }
   };
@@ -2138,13 +2266,49 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const selectedMedication = medications.find((m) => m.id === selectedMedId);
     const quota = Number(selectedMedication?.quota) || 0;
     medItems.forEach((t) => {
-      if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
+      if (!isClosure24h(t)) return;
       const currentStockAtClose = Number(t.totalMedicamento) || 0;
       map[t.id] = computeTotalReponer(quota, currentStockAtClose);
     });
     return map;
-     
+
   }, [transactions, selectedMedId, medications]);
+  // Corte de inmutabilidad por medicamento. Un CIERRE 24 HORAS congela todo el
+  // historial de SU medicamento hasta ese instante (incluido el cierre mismo):
+  // no se puede editar ni eliminar. Lo posterior sigue siendo editable hasta el
+  // proximo cierre de 24 horas.
+  const closureCutoffByMedId = useMemo(
+    () => mergeClosureCutoffs(getClosureCutoffByMedId(transactions), closureLocksByMedId),
+    [transactions, closureLocksByMedId],
+  );
+  const isLockedTransaction = useCallback(
+    (t) => isTransactionLocked(t, closureCutoffByMedId),
+    [closureCutoffByMedId],
+  );
+  // Retrocompatibilidad: los cierres de 24 horas registrados antes de esta version
+  // no dejaron candado en Firestore, y sin el las reglas de seguridad no tienen
+  // con que bloquear. Cuando aparece un cierre cuyo corte supera al persistido, se
+  // publica el candado. El ref evita reencolar el mismo valor en cada render.
+  useEffect(() => {
+    if (!authUser || suppressClosureLockSyncRef.current) return;
+    const computed = getClosureCutoffByMedId(transactions);
+    Object.entries(computed).forEach(([medId, cutoff]) => {
+      const stored = Number(closureLocksByMedId[medId]);
+      if (Number.isFinite(stored) && stored >= cutoff) return;
+      if (Number(closureLockSyncRef.current[medId]) >= cutoff) return;
+      closureLockSyncRef.current[medId] = cutoff;
+      const ok = enqueueWrite({
+        type: 'set',
+        collection: 'closureLocks',
+        id: medId,
+        data: { id: medId, medId, cutoff, updatedAt: Date.now(), updatedBy: 'BACKFILL', reset: false },
+      });
+      if (ok) setClosureLocksByMedId((prev) => ({ ...prev, [medId]: cutoff }));
+    });
+    // enqueueWrite se redefine en cada render; depender de el reejecutaria el efecto
+    // sin necesidad. El ref ya garantiza que cada corte se publique una sola vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions, closureLocksByMedId, authUser]);
   // pendingCount es el trigger intencional: cuando cambia, recomputamos el set
   // a partir del ref (que no es reactivo). Es un patron deliberado.
   const pendingWriteKeySet = useMemo(() => {
@@ -2221,7 +2385,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const quotaByMedId = new Map(medications.map((m) => [m.id, Number(m.quota) || 0]));
     const latestByMedId = new Map();
     transactions.forEach((t) => {
-      if (!(t.isCierre && t.cierreTurno === 'CIERRE 24 HORAS')) return;
+      if (!isClosure24h(t)) return;
       const medId = t.medId;
       if (!medId) return;
       const ts = getTransactionTimestamp(t);
@@ -2605,6 +2769,28 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     }
   };
 
+  // La correccion de lote reescribe el ingreso de origen y los egresos ya
+  // asignados a el. Si alguno quedo dentro de un periodo cerrado, la correccion
+  // estaria modificando historial inmutable, asi que se bloquea.
+  const findClosureLockedInPlan = (items, plan) => {
+    const ids = new Set([
+      String(plan?.origin?.sourceTransactionId),
+      ...(plan?.affectedTransactions || []).map((item) => String(item.id)),
+    ]);
+    return (items || []).filter((t) => ids.has(String(t.id)) && isLockedTransaction(t));
+  };
+
+  const blockIfClosureLockedPlan = (items, plan) => {
+    const locked = findClosureLockedInPlan(items, plan);
+    if (locked.length === 0) return false;
+    alert(
+      'No se puede corregir este lote.\n\n' +
+      `${locked.length} de los movimientos afectados son anteriores a un CIERRE 24 HORAS y el periodo ya esta cerrado.\n` +
+      'Registre un ajuste de saldo en el periodo abierto en lugar de reescribir el historial.',
+    );
+    return true;
+  };
+
   // Correccion de digitacion: reescribe el origen y el snapshot que quedo en los
   // egresos ya asignados. No mueve cantidades, por lo que no lleva ancla.
   const applyLotCorrection = async () => {
@@ -2634,6 +2820,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       );
       return;
     }
+    if (blockIfClosureLockedPlan(transactions, draftPlan)) return;
     const confirmed = await requestStyledConfirm(
       `Confirme la correccion del lote ${draftPlan.origin.lotNumber} (${formatLotExpirationDate(draftPlan.origin.expirationDate)}) a ` +
         `${draftPlan.lotNumber} (${formatLotExpirationDate(draftPlan.expirationDate)}). ` +
@@ -2657,6 +2844,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         await loadAdjustLotContext(medId);
         return;
       }
+      // Reverificacion sobre el historial completo: la lista en memoria pudo no
+      // incluir egresos viejos ya congelados.
+      if (blockIfClosureLockedPlan(completeTransactions, plan)) return;
       const batch = writeBatch(db);
       batch.set(
         doc(db, dataDocPath, 'transactions', String(plan.origin.sourceTransactionId)),
@@ -2913,6 +3103,12 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         alert('No se encontro el movimiento que desea editar.');
         return;
       }
+      // Corte temprano: el movimiento pertenece a un periodo ya cerrado.
+      if (isLockedTransaction(current)) {
+        notifyClosureLocked('modificar este movimiento');
+        setShowModal(false);
+        return;
+      }
       const isIncome = current.type === 'IN';
       const rxType = isIncome ? 'CERRADA' : formData.get('rxType');
       const rxQuantity = rxType === 'ABIERTA' ? parseInt(formData.get('rxQuantity'), 10) || 0 : 0;
@@ -3079,10 +3275,23 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       }
       const cierreTurno = toUpper(formData.get('turno'));
       const computedTotalMedicamento = verifiedClosingStock;
+      if (cierreTurno === CLOSURE_24H_TURNO) {
+        const lockedCount = transactions.filter((t) => t.medId === selectedMedId).length;
+        const medName = medications.find((m) => m.id === selectedMedId)?.name || selectedMedId;
+        const confirmClosure = await requestStyledConfirm(
+          `Este CIERRE 24 HORAS congelara el historial de ${medName}: ` +
+            `${lockedCount} movimiento(s) anteriores quedaran inmutables (no se podran editar ni eliminar), ` +
+            'incluido el cierre mismo. ¿Desea continuar?',
+        );
+        if (!confirmClosure) return;
+      }
+      // El corte se fija despues de confirmar, para que un movimiento registrado
+      // mientras el dialogo estaba abierto no quede del lado equivocado del cierre.
+      const closureCreatedAt = Date.now();
       const newCierre = {
-        id: Date.now(),
+        id: closureCreatedAt,
         date: now,
-        createdAt: Date.now(),
+        createdAt: closureCreatedAt,
         medId: selectedMedId,
         type: 'IN',
         amount: 0,
@@ -3104,6 +3313,27 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         return;
       }
       setTransactions([newCierre, ...transactions]);
+      if (cierreTurno === CLOSURE_24H_TURNO) {
+        // El candado persistido es lo que leen las reglas de Firestore: sin el,
+        // el bloqueo solo existiria en pantalla. Va por la misma cola que el
+        // cierre, asi que respeta el modo sin conexion.
+        const okLock = enqueueWrite({
+          type: 'set',
+          collection: 'closureLocks',
+          id: selectedMedId,
+          data: {
+            id: selectedMedId,
+            medId: selectedMedId,
+            cutoff: closureCreatedAt,
+            closureId: newCierre.id,
+            updatedAt: closureCreatedAt,
+            updatedBy: newCierre.pharmacist,
+            reset: false,
+          },
+        });
+        if (!okLock) notifyWriteFailed('el bloqueo del cierre de 24 horas');
+        else setClosureLocksByMedId((prev) => ({ ...prev, [selectedMedId]: closureCreatedAt }));
+      }
     } else if (modalType === 'cross-check') {
       const selectedVerifier = toUpper(formData.get('crossCheckPharmacist'));
       if (!editingTransactionId || !selectedVerifier) return;
@@ -3325,7 +3555,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
 
   const getKardexRowClass = (t) => {
     if (t.isCierre) {
-      return t.cierreTurno === 'CIERRE 24 HORAS' ? '!bg-rose-50 hover:!bg-rose-50' : '!bg-amber-50 hover:!bg-amber-50';
+      return isClosure24h(t) ? '!bg-rose-50 hover:!bg-rose-50' : '!bg-amber-50 hover:!bg-amber-50';
     }
     if (t.type === 'IN' && t.service === 'INGRESO A INVENTARIO') {
       return '!bg-emerald-50 hover:!bg-emerald-50';
@@ -3945,6 +4175,17 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                       const hasKey = await requestSecurityKey();
                       if (!hasKey) return;
                       const med = medications.find((m) => m.id === selectedMedId);
+                      // Eliminar el medicamento borra sus movimientos en cascada. Si alguno
+                      // quedo congelado por un CIERRE 24 HORAS, esa via destruiria historial
+                      // cerrado por la puerta de atras: se bloquea igual que el borrado directo.
+                      const lockedCount = countLockedTransactions(transactions, selectedMedId, closureCutoffByMedId);
+                      if (lockedCount > 0) {
+                        alert(
+                          `No se puede eliminar ${med?.name || 'este medicamento'}.\n\n` +
+                          `Tiene ${lockedCount} movimiento(s) congelados por un CIERRE 24 HORAS y el historial cerrado es inmutable.`,
+                        );
+                        return;
+                      }
                       const movementCount = transactions.filter((t) => t.medId === selectedMedId).length;
                       const confirmDelete = window.confirm(
                         `Eliminar ${med?.name || 'medicamento'}? Se borraran ${movementCount} movimientos asociados.`,
@@ -4007,7 +4248,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                       <td className="px-6 py-4 text-center">
                         {t.isCierre ? (
                           <span className="font-bold uppercase text-amber-700">
-                            {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
+                            {isClosure24h(t) ? 'CIERRE' : 'INVENTARIO'}
                           </span>
                         ) : (
                           <div className="flex flex-col items-center gap-1">
@@ -4054,7 +4295,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                       </td>
                       <td className="px-6 py-4 text-center">
                         {t.isCierre ? (
-                          t.cierreTurno === 'CIERRE 24 HORAS' ? (
+                          isClosure24h(t) ? (
                             <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
                           ) : (
                             <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
@@ -4112,7 +4353,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2 justify-center items-center min-w-[150px] mx-auto">
-                          {!t.isCierre && (
+                          {!t.isCierre && !isLockedTransaction(t) && (
                             <button
                               onClick={() => {
                                 setEditingTransactionId(t.id);
@@ -4126,7 +4367,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                               Editar
                             </button>
                           )}
-                          {t.isCierre && (
+                          {t.isCierre && !isLockedTransaction(t) && (
                             <span
                               aria-hidden="true"
                               className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-transparent invisible"
@@ -4152,22 +4393,31 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           >
                             <Bell size={14} />
                           </button>
-                          <button
-                            onClick={() => {
-                              requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
-                                if (!confirmDelete) return;
-                                const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
-                                if (!okDel) {
-                                  notifyWriteFailed('la eliminacion');
-                                  return;
-                                }
-                                setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                              });
-                            }}
-                            className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                          >
-                            Eliminar
-                          </button>
+                          {isLockedTransaction(t) ? (
+                            <span
+                              className="flex items-center gap-1 bg-slate-100 border border-slate-300 text-slate-500 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
+                              title={CLOSURE_LOCK_HINT}
+                            >
+                              <Lock size={12} /> Cerrado
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
+                                  if (!confirmDelete) return;
+                                  const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                  if (!okDel) {
+                                    notifyWriteFailed('la eliminacion');
+                                    return;
+                                  }
+                                  setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                });
+                              }}
+                              className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                            >
+                              Eliminar
+                            </button>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">
@@ -4247,7 +4497,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                         <td className="px-6 py-4 text-center">
                           {t.isCierre ? (
                             <span className="font-bold uppercase text-amber-700">
-                              {t.cierreTurno === 'CIERRE 24 HORAS' ? 'CIERRE' : 'INVENTARIO'}
+                              {isClosure24h(t) ? 'CIERRE' : 'INVENTARIO'}
                             </span>
                           ) : (
                             <div className="flex flex-col items-center gap-1">
@@ -4294,7 +4544,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                         </td>
                         <td className="px-6 py-4 text-center">
                           {t.isCierre ? (
-                            t.cierreTurno === 'CIERRE 24 HORAS' ? (
+                            isClosure24h(t) ? (
                               <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
                             ) : (
                               <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
@@ -4347,7 +4597,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                         </td>
                       <td className="px-6 py-4">
                           <div className="flex gap-2 justify-center items-center min-w-[150px] mx-auto">
-                            {!t.isCierre && (
+                            {!t.isCierre && !isLockedTransaction(t) && (
                               <button
                                 onClick={() => {
                                   setEditingTransactionId(t.id);
@@ -4361,7 +4611,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                                 Editar
                               </button>
                             )}
-                            {t.isCierre && (
+                            {t.isCierre && !isLockedTransaction(t) && (
                               <span
                                 aria-hidden="true"
                                 className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border border-transparent invisible"
@@ -4387,22 +4637,31 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             >
                               <Bell size={14} />
                             </button>
-                            <button
-                              onClick={() => {
-                                requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
-                                  if (!confirmDelete) return;
-                                  const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
-                                  if (!okDel) {
-                                    notifyWriteFailed('la eliminacion');
-                                    return;
-                                  }
-                                  setTransactions(transactions.filter((tx) => tx.id !== t.id));
-                                });
-                              }}
-                              className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
-                            >
-                              Eliminar
-                            </button>
+                            {isLockedTransaction(t) ? (
+                              <span
+                                className="flex items-center gap-1 bg-slate-100 border border-slate-300 text-slate-500 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
+                                title={CLOSURE_LOCK_HINT}
+                              >
+                                <Lock size={12} /> Cerrado
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  requestStyledConfirm(`Eliminar movimiento: ${getTransactionLabel(t)}?`).then((confirmDelete) => {
+                                    if (!confirmDelete) return;
+                                    const okDel = enqueueWrite({ type: 'delete', collection: 'transactions', id: t.id });
+                                    if (!okDel) {
+                                      notifyWriteFailed('la eliminacion');
+                                      return;
+                                    }
+                                    setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                  });
+                                }}
+                                className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
+                              >
+                                Eliminar
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 text-center text-[10px] font-bold text-slate-400 uppercase">
@@ -5793,7 +6052,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                   <SelectLabel
                     label="Turno"
                     name="turno"
-                    options={['PRIMER TURNO', 'SEGUNDO TURNO', 'TERCER TURNO', 'CIERRE 24 HORAS']}
+                    options={['PRIMER TURNO', 'SEGUNDO TURNO', 'TERCER TURNO', CLOSURE_24H_TURNO]}
                     defaultValue={cierreTurnoValue}
                     onChange={(e) => setCierreTurnoValue(e.target.value)}
                   />

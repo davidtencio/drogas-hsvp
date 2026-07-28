@@ -11,6 +11,11 @@ import {
   computeTotalReponer,
   formatCurrency,
   parseCurrency,
+  isClosure24h,
+  getClosureCutoffByMedId,
+  mergeClosureCutoffs,
+  isTransactionLocked,
+  countLockedTransactions,
 } from './inventory';
 
 describe('parseDateTime', () => {
@@ -239,5 +244,66 @@ describe('formatCurrency / parseCurrency', () => {
 
   it('formatCurrency devuelve cadena vacia para no numeros', () => {
     expect(formatCurrency('abc')).toBe('');
+  });
+});
+
+describe('bloqueo por CIERRE 24 HORAS', () => {
+  const cierre24 = { id: 'c1', medId: 'MED_A', isCierre: true, cierreTurno: 'CIERRE 24 HORAS', createdAt: 2000 };
+  const cierreTurno = { id: 'c2', medId: 'MED_A', isCierre: true, cierreTurno: 'SEGUNDO TURNO', createdAt: 3000 };
+  const antes = { id: 't1', medId: 'MED_A', createdAt: 1500 };
+  const despues = { id: 't2', medId: 'MED_A', createdAt: 2500 };
+  const otroMed = { id: 't3', medId: 'MED_B', createdAt: 1500 };
+
+  it('isClosure24h distingue el cierre de 24 horas de los cierres de turno', () => {
+    expect(isClosure24h(cierre24)).toBe(true);
+    expect(isClosure24h(cierreTurno)).toBe(false);
+    expect(isClosure24h({ medId: 'MED_A', createdAt: 1 })).toBe(false);
+  });
+
+  it('el cutoff es el cierre de 24 horas mas reciente de cada medicamento', () => {
+    const viejo = { id: 'c0', medId: 'MED_A', isCierre: true, cierreTurno: 'CIERRE 24 HORAS', createdAt: 1000 };
+    const map = getClosureCutoffByMedId([viejo, cierre24, cierreTurno, antes, otroMed]);
+    expect(map).toEqual({ MED_A: 2000 });
+  });
+
+  it('congela lo anterior al cierre y deja libre lo posterior', () => {
+    const cutoffs = getClosureCutoffByMedId([cierre24]);
+    expect(isTransactionLocked(antes, cutoffs)).toBe(true);
+    expect(isTransactionLocked(despues, cutoffs)).toBe(false);
+  });
+
+  it('congela el cierre mismo (comparacion <=), para que no se pueda borrar el ancla', () => {
+    const cutoffs = getClosureCutoffByMedId([cierre24]);
+    expect(isTransactionLocked(cierre24, cutoffs)).toBe(true);
+  });
+
+  it('no congela movimientos de otro medicamento', () => {
+    const cutoffs = getClosureCutoffByMedId([cierre24]);
+    expect(isTransactionLocked(otroMed, cutoffs)).toBe(false);
+  });
+
+  it('sin cierre de 24 horas no hay nada congelado', () => {
+    const cutoffs = getClosureCutoffByMedId([cierreTurno, antes, despues]);
+    expect(cutoffs).toEqual({});
+    expect(isTransactionLocked(antes, cutoffs)).toBe(false);
+  });
+
+  it('usa la fecha visible cuando el movimiento no tiene createdAt', () => {
+    const cutoffs = { MED_A: parseDateTime('27/08/2025 3:00 PM').getTime() };
+    expect(isTransactionLocked({ medId: 'MED_A', date: '27/08/2025 1:34 PM' }, cutoffs)).toBe(true);
+    expect(isTransactionLocked({ medId: 'MED_A', date: '27/08/2025 5:00 PM' }, cutoffs)).toBe(false);
+  });
+
+  it('mergeClosureCutoffs se queda con el corte mayor entre memoria y Firestore', () => {
+    expect(mergeClosureCutoffs({ MED_A: 1000 }, { MED_A: 2000, MED_B: 500 })).toEqual({ MED_A: 2000, MED_B: 500 });
+    expect(mergeClosureCutoffs({ MED_A: 3000 }, { MED_A: 2000 })).toEqual({ MED_A: 3000 });
+    expect(mergeClosureCutoffs({ MED_A: 1000 }, { MED_A: 'basura' })).toEqual({ MED_A: 1000 });
+  });
+
+  it('countLockedTransactions cuenta solo lo congelado del medicamento', () => {
+    const cutoffs = getClosureCutoffByMedId([cierre24]);
+    const all = [cierre24, antes, despues, otroMed];
+    expect(countLockedTransactions(all, 'MED_A', cutoffs)).toBe(2);
+    expect(countLockedTransactions(all, 'MED_B', cutoffs)).toBe(0);
   });
 });

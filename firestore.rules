@@ -15,7 +15,86 @@ service cloud.firestore {
     match /orgData/{orgId} {
       // NOTE: Replace this with an org membership check when available.
       allow read, write: if signedIn();
-      match /{subcollection=**}/{docId} {
+
+      // --- Inmutabilidad del CIERRE 24 HORAS ---
+      // Las colecciones se enumeran una por una a proposito. Las reglas de
+      // Firestore se combinan de forma PERMISIVA: si un `match` con comodin
+      // concede la escritura, ningun `match` mas especifico puede quitarla. Un
+      // `match /{sub=**}/{doc}` dejaria decorativo el bloqueo de transactions.
+
+      // Corte de cierre por medicamento (id del doc = medId). Es el dato que
+      // consultan estas reglas para saber que movimientos estan congelados.
+      match /closureLocks/{medId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.get('cutoff', -1) is number
+          && request.resource.data.get('cutoff', -1) >= 0;
+        // El corte solo puede AVANZAR. Retrocederlo desbloquearia historial ya
+        // cerrado, asi que solo se acepta como reinicio explicito y auditado
+        // (cierre de periodo o restauracion), que deja motivo y fecha.
+        // Se leen los campos con valor por defecto para que la ausencia de uno
+        // evalue a falso en vez de abortar la regla con un error.
+        allow update: if signedIn() && (
+          request.resource.data.get('cutoff', -1) >= resource.data.get('cutoff', 0)
+          || (
+            request.resource.data.get('reset', false) == true
+            && request.resource.data.get('resetReason', '') is string
+            && request.resource.data.get('resetReason', '') != ''
+            && request.resource.data.get('resetAt', 0) is number
+          )
+        );
+        allow delete: if false;
+      }
+
+      match /transactions/{txId} {
+        function cutoffFor(medId) {
+          return exists(/databases/$(database)/documents/orgData/$(orgId)/closureLocks/$(medId))
+            ? get(/databases/$(database)/documents/orgData/$(orgId)/closureLocks/$(medId)).data.get('cutoff', 0)
+            : 0;
+        }
+        // Congelado = el medicamento tiene un corte y el movimiento es anterior o
+        // simultaneo a el. El <= incluye al cierre mismo, que asi tampoco se borra.
+        // Un registro viejo sin createdAt cuenta como 0: ante la duda, se protege.
+        // El corte se resuelve una sola vez para no gastar dos accesos a documento.
+        function frozenAgainst(cutoff) {
+          return cutoff > 0 && resource.data.get('createdAt', 0) <= cutoff;
+        }
+        function frozen() {
+          return frozenAgainst(cutoffFor(resource.data.get('medId', '')));
+        }
+        // Unicas anotaciones admitidas sobre un movimiento congelado: no alteran
+        // cantidades ni saldos. Debe coincidir con CLOSURE_EDITABLE_FIELDS en App.jsx.
+        function onlyAnnotations() {
+          return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'crossCheckPharmacist',
+            'crossCheckedAt',
+            'rxUsed',
+            'rxAdjusted',
+            'rxAdjustedAt',
+            'rxAdjustedBy',
+            'rxAdjustedFrom',
+          ]);
+        }
+
+        allow read: if signedIn();
+        // Alta siempre permitida: un movimiento nuevo no puede estar congelado.
+        allow create: if signedIn();
+        allow update: if signedIn() && (!frozen() || onlyAnnotations());
+        allow delete: if signedIn() && !frozen();
+      }
+
+      match /expedientes/{docId} {
+        allow read, write: if signedIn();
+      }
+      match /bitacora/{docId} {
+        allow read, write: if signedIn();
+      }
+      match /catalog_services/{docId} {
+        allow read, write: if signedIn();
+      }
+      match /catalog_pharmacists/{docId} {
+        allow read, write: if signedIn();
+      }
+      match /catalog_condiciones/{docId} {
         allow read, write: if signedIn();
       }
     }
