@@ -8,6 +8,7 @@ import {
   mergeTransactionsById,
   computeMedStock,
   nextOpenRxUse,
+  getOpenRxUsed,
   computeTotalReponer,
   formatCurrency,
   parseCurrency,
@@ -193,30 +194,68 @@ describe('computeMedStock', () => {
   });
 });
 
-describe('nextOpenRxUse (recetas abiertas)', () => {
-  const rx = (rxUsed) => ({ medId: 'm', rxType: 'ABIERTA', prescription: 'R1', rxQuantity: 30, rxUsed });
+describe('getOpenRxUsed / nextOpenRxUse (recetas abiertas)', () => {
+  // El progreso se deriva de las salidas reales, no del rxUsed grabado.
+  const out = (amount, createdAt, extra = {}) => ({
+    id: `t${createdAt}`,
+    medId: 'm',
+    type: 'OUT',
+    rxType: 'ABIERTA',
+    prescription: 'R1',
+    rxQuantity: 30,
+    amount,
+    createdAt,
+    ...extra,
+  });
 
   it('sin movimientos previos, devuelve el monto a agregar (tope rxQuantity)', () => {
+    expect(getOpenRxUsed([], 'm', 'R1', 30)).toBe(0);
     expect(nextOpenRxUse([], 'm', 'R1', 30, 4)).toBe(4);
     expect(nextOpenRxUse([], 'm', 'R1', 30, 50)).toBe(30); // no excede la cantidad
   });
 
-  it('acumula sobre el maximo rxUsed existente', () => {
-    const items = [rx(4), rx(8)];
-    expect(nextOpenRxUse(items, 'm', 'R1', 30, 4)).toBe(12); // 8 + 4
+  it('acumula sobre las salidas ya registradas', () => {
+    const items = [out(4, 1), out(8, 2)];
+    expect(getOpenRxUsed(items, 'm', 'R1', 30)).toBe(12);
+    expect(nextOpenRxUse(items, 'm', 'R1', 30, 4)).toBe(16); // 12 + 4
   });
 
   it('nunca excede rxQuantity', () => {
-    const items = [rx(28)];
+    const items = [out(28, 1)];
     expect(nextOpenRxUse(items, 'm', 'R1', 30, 10)).toBe(30); // 28 + 10 -> tope 30
   });
 
   it('solo considera la misma receta y cantidad', () => {
     const items = [
-      { medId: 'm', rxType: 'ABIERTA', prescription: 'OTRA', rxQuantity: 30, rxUsed: 20 },
-      { medId: 'm', rxType: 'ABIERTA', prescription: 'R1', rxQuantity: 99, rxUsed: 15 },
+      out(20, 1, { prescription: 'OTRA' }),
+      out(15, 2, { rxQuantity: 99 }),
     ];
     expect(nextOpenRxUse(items, 'm', 'R1', 30, 2)).toBe(2); // ninguna coincide con (R1,30)
+  });
+
+  it('ignora los ingresos de la misma receta', () => {
+    // Un rebajo editado a ingreso conserva receta y rxUsed. Si contara, el
+    // progreso subiria sin que se haya despachado nada.
+    const items = [out(2, 1), out(9, 2, { type: 'IN', rxUsed: 30 })];
+    expect(getOpenRxUsed(items, 'm', 'R1', 30)).toBe(2);
+  });
+
+  it('un ajuste manual reescribe el acumulado desde ese movimiento', () => {
+    const items = [out(4, 1), out(2, 2, { rxAdjusted: true, rxUsed: 10 }), out(3, 3)];
+    expect(getOpenRxUsed(items, 'm', 'R1', 30)).toBe(13); // 10 (ajuste) + 3
+  });
+
+  it('un rxUsed heredado y saturado no congela el progreso', () => {
+    // Regresion: el numero de receta ya se habia usado hasta completarse, asi
+    // que ambos rebajos quedaron grabados con rxUsed = rxQuantity. Con el
+    // maximo de rxUsed el siguiente rebajo se abortaba en silencio; derivando
+    // de los amount, el progreso real es 2 y todavia admite una unidad mas.
+    const items = [
+      out(1, 1, { rxQuantity: 4, rxUsed: 4 }),
+      out(1, 2, { rxQuantity: 4, rxUsed: 4 }),
+    ];
+    expect(getOpenRxUsed(items, 'm', 'R1', 4)).toBe(2);
+    expect(nextOpenRxUse(items, 'm', 'R1', 4, 1)).toBe(3);
   });
 });
 
