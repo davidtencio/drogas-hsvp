@@ -152,16 +152,45 @@ export const computeMedStock = (transactions, medId) => {
   );
 };
 
+// Cuanto se lleva usado de una receta ABIERTA, DERIVADO de los rebajos reales:
+// suma de `amount` de las salidas del grupo (medId + receta + rxQuantity), en
+// orden cronologico, y un ajuste manual (rxAdjusted) reescribe el acumulado
+// desde ese punto. Es la misma regla que pinta el chip "X de Y" del Kardex.
+//
+// Antes esto tomaba `Math.max(rxUsed)` de los documentos. Ese valor se graba en
+// el movimiento al crearlo, asi que quedaba congelado: si el numero de receta
+// ya se habia usado hasta completarse en un episodio anterior, el rebajo nuevo
+// heredaba el maximo (p.ej. 4 de 4) aunque en pantalla se vieran 2 unidades, y
+// todo rebajo siguiente se abortaba en silencio. Derivarlo de los movimientos
+// mantiene el dato y la pantalla en el mismo criterio.
+export const getOpenRxUsed = (items, medId, prescription, rxQuantity) => {
+  const matches = (items || [])
+    .filter(
+      (t) =>
+        t.medId === medId &&
+        t.type === 'OUT' &&
+        t.rxType === 'ABIERTA' &&
+        t.prescription === prescription &&
+        t.rxQuantity === rxQuantity,
+    )
+    .slice()
+    .sort(compareTransactionsAsc);
+  let used = 0;
+  for (const item of matches) {
+    used += Number(item.amount) || 0;
+    if (item.rxAdjusted) {
+      used = Number(item.rxUsed) || used;
+    }
+  }
+  return Math.min(used, Number(rxQuantity) || 0);
+};
+
 // Progreso de uso de una receta ABIERTA: dado el conjunto de movimientos,
 // calcula cuanto quedaria usado tras agregar `amountToAdd`, sin exceder rxQuantity.
 export const nextOpenRxUse = (items, medId, prescription, rxQuantity, amountToAdd = 1) => {
-  const matches = items.filter(
-    (t) => t.medId === medId && t.rxType === 'ABIERTA' && t.prescription === prescription && t.rxQuantity === rxQuantity,
-  );
   const safeAmount = Math.max(0, Number(amountToAdd) || 0);
-  if (matches.length === 0) return Math.min(safeAmount, rxQuantity);
-  const maxUsed = Math.max(...matches.map((t) => t.rxUsed || 0));
-  return Math.min(maxUsed + safeAmount, rxQuantity);
+  const used = getOpenRxUsed(items, medId, prescription, rxQuantity);
+  return Math.min(used + safeAmount, Number(rxQuantity) || 0);
 };
 
 // Cantidad a reponer para alcanzar la cuota, dado el stock al cierre.

@@ -36,6 +36,7 @@ import {
   getLastBalanceAnchor,
   mergeTransactionsById,
   nextOpenRxUse,
+  getOpenRxUsed,
   computeTotalReponer,
   computeMedStock,
   formatCurrency,
@@ -870,6 +871,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     }
   };
 
+  // Progreso mostrado en el chip, acumulado HASTA este movimiento. Es la misma
+  // regla de getOpenRxUsed (que devuelve el total del grupo y alimenta el corte
+  // de "receta completa"): si una cambia, la otra tambien. Solo se usa como
+  // respaldo cuando la fila no esta en el memo rxProgressById.
   const getRxProgress = (t) => {
     if (t.rxType !== 'ABIERTA') return '';
     const matches = transactions
@@ -991,6 +996,27 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
+    // Receta ya completa: se avisa y se corta. Antes este corte era un `return`
+    // mudo que comparaba contra el `rxUsed` grabado en el movimiento; con un
+    // rxUsed heredado de un uso anterior de la misma receta el boton quedaba
+    // muerto sin explicacion (no guardaba, no rebajaba y no avisaba nada). Va
+    // antes del chequeo de saldo y de la asignacion FEFO porque si la receta no
+    // admite mas unidades no tiene sentido tocar lotes ni leer el historial.
+    const rxQuantity = Number(transaction.rxQuantity) || 0;
+    const usedSoFar = getOpenRxUsed(
+      transactions,
+      transaction.medId,
+      transaction.prescription,
+      transaction.rxQuantity,
+    );
+    if (usedSoFar >= rxQuantity) {
+      alert(
+        `La receta ${transaction.prescription || ''} ya figura completa (${usedSoFar} de ${rxQuantity}).\n\n` +
+        'Si el progreso no corresponde, corrijalo con click derecho sobre "X de Y".\n' +
+        'Si el paciente requiere mas unidades, registre un movimiento nuevo con su receta.',
+      );
+      return;
+    }
     const proceed = await confirmIfNegativeStock(transaction.medId, amountToUse);
     if (!proceed) return;
     const lotAllocations = await prepareLotAllocations(transaction.medId, amountToUse);
@@ -1002,7 +1028,6 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       transaction.rxQuantity,
       amountToUse,
     );
-    if (nextUsed <= transaction.rxUsed) return;
     const now = new Date().toLocaleString('es-CR', {
       year: 'numeric',
       month: 'numeric',
@@ -2226,6 +2251,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
   // Progreso "X de Y" de recetas ABIERTAS precalculado en una sola pasada.
   // Antes se computaba por fila con un filter+sort sobre todas las transacciones
   // (O(n^2) en el render del Kardex); ahora se agrupa una vez por (receta, cantidad).
+  // Aplica la misma regla que getOpenRxUsed en utils/inventory (suma de salidas
+  // con override por ajuste manual), pero en una sola pasada para todo el
+  // medicamento. Si cambia una, cambian las dos: que el chip y el corte de
+  // "receta completa" midan distinto fue justo el origen del rebajo mudo.
   const rxProgressById = useMemo(() => {
     const groups = new Map();
     transactions
