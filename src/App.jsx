@@ -62,6 +62,7 @@ import {
   isLotExpired,
   planLotCorrection,
   planLotRecount,
+  summarizeLotIntegrityGate,
   validateLotEntry,
   validateLotInitialization,
 } from './utils/lots';
@@ -2340,16 +2341,27 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const hasSyncError = Boolean(syncError);
     const hasQueueRisk = queueOverflow || writeBlockedByStorage;
     const hasRecentBackup = backupAuditLog.length > 0;
-    const allInitialized = medications.length > 0 && medications.every((med) => lotInitializationByMedId[med.id]?.completed);
-    const allIntegrityVerified =
-      allInitialized && medications.every((med) => lotIntegrityAuditByMedId[med.id]?.match === true);
+    const integrityGate = summarizeLotIntegrityGate(medications, lotInitializationByMedId, lotIntegrityAuditByMedId);
+    const allInitialized = medications.length > 0 && integrityGate.pending.length === 0;
     const checks = [
       { key: 'no_pending', label: 'Sin pendientes de sincronizacion', ok: !hasPending },
       { key: 'no_sync_error', label: 'Sin errores activos de sincronizacion', ok: !hasSyncError },
       { key: 'no_queue_risk', label: 'Sin riesgo de cola local', ok: !hasQueueRisk },
       { key: 'recent_backup', label: 'Respaldo verificado en sesion', ok: hasRecentBackup },
-      { key: 'all_initialized', label: 'Todos los medicamentos inicializados', ok: allInitialized },
-      { key: 'lot_integrity', label: 'Saldo global coincide con existencias por lote', ok: allIntegrityVerified },
+      {
+        key: 'all_initialized',
+        label: 'Todos los medicamentos inicializados',
+        ok: allInitialized,
+        details: allInitialized
+          ? []
+          : integrityGate.details.filter((line) => line.startsWith('Sin inicializar') || line.startsWith('No hay')),
+      },
+      {
+        key: 'lot_integrity',
+        label: 'Saldo global coincide con existencias por lote',
+        ok: integrityGate.ok,
+        details: integrityGate.details,
+      },
     ];
     return {
       checks,
@@ -2501,16 +2513,22 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       return;
     }
     setLotIntegrityVerifying(true);
-    let mismatches = 0;
+    const mismatches = [];
     try {
       for (const med of initialized) {
         const result = await verifyLotIntegrity(med.id, { notify: false });
-        if (!result?.match) mismatches += 1;
+        if (!result?.match) {
+          mismatches.push(
+            result
+              ? `${med.name}: saldo global ${result.globalStock} vs lotes ${result.lotStock}`
+              : `${med.name}: no se pudo verificar`,
+          );
+        }
       }
       alert(
-        mismatches === 0
+        mismatches.length === 0
           ? `Integridad verificada en ${initialized.length} medicamento(s).`
-          : `Verificacion terminada con ${mismatches} medicamento(s) descuadrado(s).`,
+          : `Verificacion terminada con ${mismatches.length} medicamento(s) descuadrado(s):\n\n${mismatches.join('\n')}`,
       );
     } finally {
       setLotIntegrityVerifying(false);
@@ -5153,11 +5171,19 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 </div>
                 <div className="mt-2 space-y-2">
                   {releaseGateChecks.checks.map((check) => (
-                    <div key={check.key} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1">
-                      <span className="text-[10px] font-semibold text-slate-700">{check.label}</span>
-                      <span className={`text-[10px] font-bold ${check.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {check.ok ? 'OK' : 'FALLA'}
-                      </span>
+                    <div key={check.key} className="rounded-md border border-slate-200 bg-white px-2 py-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-semibold text-slate-700">{check.label}</span>
+                        <span className={`text-[10px] font-bold ${check.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {check.ok ? 'OK' : 'FALLA'}
+                        </span>
+                      </div>
+                      {!check.ok &&
+                        (check.details || []).map((line) => (
+                          <p key={line} className="text-[10px] text-rose-700 mt-1 leading-snug">
+                            {line}
+                          </p>
+                        ))}
                     </div>
                   ))}
                 </div>

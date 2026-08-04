@@ -13,6 +13,7 @@ import {
   isValidExpirationDate,
   planLotCorrection,
   planLotRecount,
+  summarizeLotIntegrityGate,
   validateLotEntry,
   validateLotInitialization,
   validateLotAllocations,
@@ -469,5 +470,57 @@ describe('lot tooltip formatter', () => {
 
   it('labels historical movements without traceability', () => {
     expect(formatLotTooltip(egreso(10, 2, undefined))).toBe('Registro sin trazabilidad de lote');
+  });
+});
+
+describe('release gate lot integrity summary', () => {
+  const meds = [
+    { id: 'a', name: 'MORFINA 15 MG' },
+    { id: 'b', name: 'FENTANYL 50 MCG' },
+    { id: 'c', name: 'DIAZEPAM 10 MG' },
+  ];
+  const initialized = { a: { completed: true }, b: { completed: true }, c: { completed: true } };
+
+  it('approves when every medication is initialized and matched', () => {
+    const summary = summarizeLotIntegrityGate(meds, initialized, {
+      a: { match: true },
+      b: { match: true },
+      c: { match: true },
+    });
+    expect(summary.ok).toBe(true);
+    expect(summary.details).toEqual([]);
+  });
+
+  it('names the mismatched medication with both balances', () => {
+    const summary = summarizeLotIntegrityGate(meds, initialized, {
+      a: { match: true },
+      b: { match: false, globalStock: 12, lotStock: 9 },
+      c: { match: true },
+    });
+    expect(summary.ok).toBe(false);
+    expect(summary.mismatched).toEqual([
+      expect.objectContaining({ id: 'b', globalStock: 12, lotStock: 9, difference: 3 }),
+    ]);
+    expect(summary.details).toEqual(['Descuadre en: FENTANYL 50 MCG (global 12 vs lotes 9).']);
+  });
+
+  it('separates medications pending initialization from those pending verification', () => {
+    const summary = summarizeLotIntegrityGate(meds, { a: { completed: true }, b: { completed: true } }, {
+      a: { match: true },
+    });
+    expect(summary.ok).toBe(false);
+    expect(summary.details).toEqual(['Sin verificar: FENTANYL 50 MCG.', 'Sin inicializar: DIAZEPAM 10 MG.']);
+  });
+
+  it('condenses long lists of failing medications', () => {
+    const many = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: `MED ${id.toUpperCase()}` }));
+    const summary = summarizeLotIntegrityGate(many, {}, {});
+    expect(summary.details).toEqual(['Sin inicializar: MED A, MED B, MED C y 2 mas.']);
+  });
+
+  it('fails when there are no medications registered', () => {
+    const summary = summarizeLotIntegrityGate([], {}, {});
+    expect(summary.ok).toBe(false);
+    expect(summary.details).toEqual(['No hay medicamentos registrados.']);
   });
 });

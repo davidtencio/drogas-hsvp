@@ -182,6 +182,60 @@ export const getLotInventorySummary = (transactions, medId, { asOf = new Date() 
   };
 };
 
+const listMedNames = (items, limit = 3) => {
+  const names = items.map((item) => item.label ?? item.name);
+  if (names.length <= limit) return names.join(', ');
+  return `${names.slice(0, limit).join(', ')} y ${names.length - limit} mas`;
+};
+
+// El gate de release solo indicaba OK/FALLA para la integridad de lotes, sin
+// decir cual medicamento la rompia. Este resumen clasifica cada medicamento en
+// las tres causas posibles de falla (sin inicializar, inicializado pero sin
+// verificar, y descuadrado) para que la tarjeta de Configuracion nombre al
+// responsable en vez de obligar a revisar la lista completa.
+export const summarizeLotIntegrityGate = (
+  medications,
+  lotInitializationByMedId = {},
+  lotIntegrityAuditByMedId = {},
+) => {
+  const list = Array.isArray(medications) ? medications : [];
+  const pending = [];
+  const unverified = [];
+  const mismatched = [];
+  list.forEach((med) => {
+    const id = med?.id;
+    const name = med?.name || id || 'SIN NOMBRE';
+    if (!lotInitializationByMedId?.[id]?.completed) {
+      pending.push({ id, name });
+      return;
+    }
+    const audit = lotIntegrityAuditByMedId?.[id];
+    if (!audit) {
+      unverified.push({ id, name });
+      return;
+    }
+    if (audit.match !== true) {
+      const globalStock = Number(audit.globalStock) || 0;
+      const lotStock = Number(audit.lotStock) || 0;
+      mismatched.push({
+        id,
+        name,
+        globalStock,
+        lotStock,
+        difference: globalStock - lotStock,
+        label: `${name} (global ${globalStock} vs lotes ${lotStock})`,
+      });
+    }
+  });
+  const ok = list.length > 0 && pending.length === 0 && unverified.length === 0 && mismatched.length === 0;
+  const details = [];
+  if (list.length === 0) details.push('No hay medicamentos registrados.');
+  if (mismatched.length > 0) details.push(`Descuadre en: ${listMedNames(mismatched)}.`);
+  if (unverified.length > 0) details.push(`Sin verificar: ${listMedNames(unverified)}.`);
+  if (pending.length > 0) details.push(`Sin inicializar: ${listMedNames(pending)}.`);
+  return { ok, pending, unverified, mismatched, details };
+};
+
 export const allocateLotsFEFO = (transactions, medId, amount, { asOf = new Date() } = {}) => {
   const requestedQuantity = Number(amount);
   if (!isPositiveInteger(requestedQuantity)) {
