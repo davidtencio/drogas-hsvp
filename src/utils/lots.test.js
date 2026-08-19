@@ -3,6 +3,7 @@ import {
   allocateLotsFEFO,
   condenseLotsByIdentity,
   formatLotTooltip,
+  groupLotAllocations,
   getAvailableLots,
   getLotInventorySummary,
   getLotOriginEditState,
@@ -466,6 +467,16 @@ describe('lot tooltip formatter', () => {
     expect(formatLotTooltip(transaction)).toBe(
       'Lote A: 3 unidades · expira 31/05/2027\nLote B: 2 unidades · expira 30/06/2027',
     );
+  });
+
+  it('condenses allocations of the same lot coming from different entries', () => {
+    const transaction = egreso(10, 10, [
+      allocation(1, '70610823', '2028-08-30', 8),
+      allocation(2, '70610823', '2028-08-30', 2),
+    ]);
+    expect(groupLotAllocations(transaction)).toHaveLength(1);
+    expect(formatLotTooltip(transaction)).toBe('Lote 70610823: 10 unidades · expira 30/08/2028');
+    expect(transaction.lotAllocations).toHaveLength(2);
   });
 
   it('labels historical movements without traceability', () => {
