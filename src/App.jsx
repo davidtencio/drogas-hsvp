@@ -60,6 +60,7 @@ import {
   getLotInventorySummary,
   getLotOriginEditState,
   getLotUsage,
+  groupLotAllocations,
   isLotExpired,
   planLotCorrection,
   planLotRecount,
@@ -4314,7 +4315,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             )}
                             {t.type === 'OUT' && Array.isArray(t.lotAllocations) && t.lotAllocations.length > 0 && (
                               <span className="cursor-help text-[9px] font-bold uppercase text-blue-600" title={formatLotTooltip(t)}>
-                                {t.lotAllocations.length} lote(s) · ver detalle
+                                {groupLotAllocations(t).length} lote(s) · ver detalle
                               </span>
                             )}
                           </div>
@@ -4563,7 +4564,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                               )}
                               {t.type === 'OUT' && Array.isArray(t.lotAllocations) && t.lotAllocations.length > 0 && (
                                 <span className="cursor-help text-[9px] font-bold uppercase text-blue-600" title={formatLotTooltip(t)}>
-                                  {t.lotAllocations.length} lote(s) · ver detalle
+                                  {groupLotAllocations(t).length} lote(s) · ver detalle
                                 </span>
                               )}
                             </div>

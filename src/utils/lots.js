@@ -441,13 +441,27 @@ export const formatLotExpirationDate = (value) => {
   return `${day}/${month}/${year}`;
 };
 
+// Un mismo lote fisico puede haber entrado en varios ingresos, asi que FEFO
+// genera una asignacion por origen y el detalle mostraba el mismo lote repetido.
+// Solo para la vista se suman las asignaciones que comparten numero y
+// vencimiento; lotAllocations conserva intacto el sourceTransactionId de cada
+// ingreso, que es lo que usan validateLotAllocations y planLotCorrection.
+export const groupLotAllocations = (transaction) =>
+  condenseLotsByIdentity(
+    (Array.isArray(transaction?.lotAllocations) ? transaction.lotAllocations : []).map((allocation) => ({
+      lotNumber: allocation?.lotNumber || 'SIN IDENTIFICAR',
+      expirationDate: allocation?.expirationDate || '',
+      availableQuantity: allocation?.quantity,
+    })),
+  );
+
 export const formatLotTooltip = (transaction) => {
-  const allocations = Array.isArray(transaction?.lotAllocations) ? transaction.lotAllocations : [];
-  if (allocations.length === 0) return 'Registro sin trazabilidad de lote';
-  return allocations
+  const groups = groupLotAllocations(transaction);
+  if (groups.length === 0) return 'Registro sin trazabilidad de lote';
+  return groups
     .map(
-      (allocation) =>
-        `Lote ${allocation.lotNumber || 'SIN IDENTIFICAR'}: ${Number(allocation.quantity) || 0} unidades · expira ${formatLotExpirationDate(allocation.expirationDate)}`,
+      (group) =>
+        `Lote ${group.lotNumber}: ${group.quantity} unidades · expira ${formatLotExpirationDate(group.expirationDate)}`,
     )
     .join('\n');
 };
