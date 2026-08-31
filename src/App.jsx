@@ -299,11 +299,6 @@ const App = () => {
     expedientes: null,
     bitacora: null,
   });
-  const infiniteSentinelRefs = useRef({
-    transactions: null,
-    expedientes: null,
-    bitacora: null,
-  });
   const [auditoriaSearch, setAuditoriaSearch] = useState('');
   const ORG_ID = 'hsvp';
   const dataDocPath = authUser ? `orgData/${ORG_ID}` : `appState/${authUser?.uid || 'anon'}`;
@@ -1290,11 +1285,11 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         const snap = await getCountFromServer(colRef);
         setTotalTransactionsCount(Number(snap.data()?.count || 0));
       } catch {
-        setTotalTransactionsCount((prev) => (prev > 0 ? prev : transactions.length));
+        // recordsUsage usa transactions.length como respaldo si el conteo remoto falla.
       }
     };
     loadTotalTransactionsCount();
-  }, [authUser, cloudReady, dataDocPath, pendingCount, transactions.length]);
+  }, [authUser, cloudReady, dataDocPath]);
 
   useEffect(() => {
     if (!showModal) {
@@ -1428,14 +1423,16 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           let hadError = false;
           while (items.length < initialLoadLimit) {
             try {
+              const remaining = initialLoadLimit - items.length;
+              const batchSize = Math.min(500, remaining);
               const q = lastDoc
-                ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
-                : query(colRef, orderBy('createdAt', 'desc'), limit(500));
+                ? query(colRef, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(batchSize))
+                : query(colRef, orderBy('createdAt', 'desc'), limit(batchSize));
               const snap = await getDocs(q);
               if (snap.empty) break;
               items.push(...snap.docs.map((d) => d.data()));
               lastDoc = snap.docs[snap.docs.length - 1];
-              if (snap.docs.length < 500) break;
+              if (snap.docs.length < batchSize) break;
               await delay(50);
             } catch {
               indexError = true;
@@ -1653,73 +1650,6 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     // loadAllForMed se redefine en cada render; incluirla causaria bucle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser, cloudReady, activeTab, selectedMedId, medLoadStatus]);
-
-  useEffect(() => {
-    if (!authUser || !cloudReady) return;
-    if (!kardexSearch.trim()) return;
-    if (!collectionLoadState.transactions.hasMore || collectionLoadState.transactions.loading) return;
-    loadMoreCollection('transactions', setTransactions);
-    // loadMoreCollection se redefine en cada render; incluirla causaria bucle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    authUser,
-    cloudReady,
-    kardexSearch,
-    collectionLoadState.transactions.hasMore,
-    collectionLoadState.transactions.loading,
-  ]);
-
-  useEffect(() => {
-    if (!authUser || !cloudReady) return;
-    const map = {
-      kardex: { name: 'transactions', setter: setTransactions },
-      auditoria: { name: 'expedientes', setter: setExpedientes },
-      bitacora: { name: 'bitacora', setter: setBitacora },
-    };
-    const config = map[activeTab];
-    if (!config) return;
-    const target = infiniteSentinelRefs.current[config.name];
-    if (!target) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries;
-        if (!entry?.isIntersecting) return;
-        loadMoreCollection(config.name, config.setter);
-      },
-      { root: null, rootMargin: '200px 0px', threshold: 0.1 },
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, authUser, cloudReady, collectionLoadState]);
-
-  useEffect(() => {
-    if (!authUser || !cloudReady) return;
-    const map = {
-      kardex: { name: 'transactions', setter: setTransactions },
-      auditoria: { name: 'expedientes', setter: setExpedientes },
-      bitacora: { name: 'bitacora', setter: setBitacora },
-    };
-    const config = map[activeTab];
-    if (!config) return;
-    const handleScroll = () => {
-      const status = collectionLoadState[config.name];
-      if (!status?.hasMore || status?.loading) return;
-      const viewportBottom = window.scrollY + window.innerHeight;
-      const pageBottom = document.documentElement.scrollHeight;
-      if (pageBottom - viewportBottom < 260) {
-        loadMoreCollection(config.name, config.setter);
-      }
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleScroll);
-    handleScroll();
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleScroll);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, authUser, cloudReady, collectionLoadState]);
 
   const handleRequestChange = (medId, value) => {
     const num = parseInt(value, 10);
@@ -4495,7 +4425,6 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
               />
               {collectionLoadState.transactions.hasMore && (
                 <div className="px-6 pb-4">
-                  <div ref={(el) => { infiniteSentinelRefs.current.transactions = el; }} className="h-1" />
                   <button
                     type="button"
                     onClick={() => loadMoreCollection('transactions', setTransactions)}
@@ -4882,7 +4811,6 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
             />
             {collectionLoadState.expedientes.hasMore && (
               <div className="px-6 pb-4">
-                <div ref={(el) => { infiniteSentinelRefs.current.expedientes = el; }} className="h-1" />
                 <button
                   type="button"
                   onClick={() => loadMoreCollection('expedientes', setExpedientes)}
@@ -4941,7 +4869,6 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
             />
             {collectionLoadState.bitacora.hasMore && (
               <div className="px-6 pb-4">
-                <div ref={(el) => { infiniteSentinelRefs.current.bitacora = el; }} className="h-1" />
                 <button
                   type="button"
                   onClick={() => loadMoreCollection('bitacora', setBitacora)}
