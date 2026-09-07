@@ -19,7 +19,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { auth, db, googleProvider } from './firebase';
-import { collection, doc, getCountFromServer, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, setDoc, startAfter, where, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, getDocs, getDocsFromServer, limit, onSnapshot, orderBy, query, setDoc, startAfter, where, writeBatch, deleteField } from 'firebase/firestore';
+import { createLiveHistory, replaceMedicationHistory } from './utils/liveHistory';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -101,6 +102,7 @@ const CLOSURE_EDITABLE_FIELDS = [
 ];
 const MED_TYPES = ['Estupefaciente', 'Psicotropico', 'Otros'];
 const PAGE_SIZE = 25;
+const MED_HISTORY_SYNC_ERROR = 'No se pudo confirmar el historial del medicamento con el servidor. Revise la conexion y reintente.';
 const CR_TIMEZONE = 'America/Costa_Rica';
 const ENV_MAX_RECORDS = Number.parseInt(import.meta.env.VITE_MAX_RECORDS || '', 10);
 const DEFAULT_MAX_RECORDS = Number.isFinite(ENV_MAX_RECORDS) && ENV_MAX_RECORDS > 0 ? ENV_MAX_RECORDS : 40000;
@@ -280,7 +282,8 @@ const App = () => {
   // desfasado; para el Kardex (que es por medicamento) cargamos todo el medicamento
   // y asi saldo, "X de Y" y el total del cierre quedan completos. medId -> estado.
   const [medLoadStatus, setMedLoadStatus] = useState({}); // 'loading' | 'complete' | 'error'
-  const medLoadInFlightRef = useRef({});
+  const liveHistoryRef = useRef(null);
+  const [historyReadMetrics, setHistoryReadMetrics] = useState(null);
   const pendingWritesRef = useRef([]);
   // Cortes de CIERRE 24 HORAS ya publicados en Firestore por el efecto de
   // retrocompatibilidad, y bandera para silenciarlo mientras el cierre de periodo
@@ -402,7 +405,7 @@ const App = () => {
       notifyWriteFailed('el ajuste manual');
       return;
     }
-    setTransactions([newAdjustment, ...transactions]);
+    setTransactions((previous) => mergeTransactionsById(previous, [newAdjustment]));
     setAdjustBalanceValue('');
     alert('Ajuste manual de saldo aplicado.');
     });
@@ -627,7 +630,7 @@ Desde Configuracion se puede **Descargar Base JSON** (respaldo completo) y **Car
         alert('No se pudo verificar el historial completo de fentanilo. Revise la conexion o el indice de Firestore e intente de nuevo.');
         return;
       }
-      reportTransactions = mergeTransactionsById(reportTransactions, loaded).filter((t) => t.medId === fentanyl.id);
+      reportTransactions = loaded;
     }
 
     const ordered = reportTransactions.slice().sort(compareTransactionsAsc);
@@ -1049,7 +1052,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       notifyWriteFailed('el rebajo');
       return;
     }
-    setTransactions([newTransaction, ...transactions]);
+    setTransactions((previous) => mergeTransactionsById(previous, [newTransaction]));
   };
 
   // Un movimiento congelado admite unicamente anotaciones que no alteran
@@ -1253,6 +1256,40 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    setMedLoadStatus({});
+    setHistoryReadMetrics(null);
+    const history = createLiveHistory({
+      subscribe: (medId, next, error) => onSnapshot(
+        query(collection(db, dataDocPath, 'transactions'), where('medId', '==', medId)),
+        { includeMetadataChanges: true },
+        (snapshot) => next({
+          fromCache: snapshot.metadata.fromCache,
+          hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          items: snapshot.docs.map((item) => ({ ...item.data(), id: item.data().id ?? item.id })),
+        }),
+        error,
+      ),
+      onChange: (medId, items) => setTransactions((previous) =>
+        replaceMedicationHistory(previous, medId, items, pendingWritesRef.current)),
+      onStatus: (medId, status) => setMedLoadStatus((previous) => ({ ...previous, [medId]: status })),
+      onMetrics: setHistoryReadMetrics,
+    });
+    liveHistoryRef.current = history;
+    const offline = () => history.setOnline(false);
+    const online = () => history.setOnline(true);
+    history.setOnline(navigator.onLine);
+    window.addEventListener('offline', offline);
+    window.addEventListener('online', online);
+    return () => {
+      liveHistoryRef.current = null;
+      history.dispose();
+      window.removeEventListener('offline', offline);
+      window.removeEventListener('online', online);
+    };
+  }, [authUser, dataDocPath]);
 
   useEffect(() => {
     try {
@@ -1599,43 +1636,27 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     }
   };
 
-  // Carga TODOS los movimientos de un medicamento (where medId==X) y los fusiona
-  // en `transactions`. Garantiza que el Kardex de ese medicamento sea completo:
-  // saldo, "X de Y" y el total del cierre dejan de depender de la ventana global
-  // de 200 por createdAt. Requiere indice Firestore (medId + createdAt desc).
+  // Una suscripcion por medicamento mantiene el historial completo al dia.
+  // Las verificaciones FEFO reutilizan esa suscripcion, sin releer N documentos
+  // en cada salida. Las altas, ediciones y eliminaciones remotas se reciben
+  // incrementalmente; cache incompleta y escrituras sin confirmar no bastan.
   const loadAllForMed = async (medId) => {
     if (!authUser || !cloudReady || !medId) return;
-    if (medLoadInFlightRef.current[medId]) return;
-    medLoadInFlightRef.current[medId] = true;
-    setMedLoadStatus((prev) => ({ ...prev, [medId]: 'loading' }));
+    const history = liveHistoryRef.current;
+    if (!history) return null;
     try {
-      const colRef = collection(db, dataDocPath, 'transactions');
-      const collected = [];
-      let lastDoc = null;
-      for (;;) {
-        const q = lastDoc
-          ? query(colRef, where('medId', '==', medId), orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(500))
-          : query(colRef, where('medId', '==', medId), orderBy('createdAt', 'desc'), limit(500));
-        const snap = await getDocs(q);
-        if (snap.empty) break;
-        collected.push(...snap.docs.map((d) => d.data()));
-        lastDoc = snap.docs[snap.docs.length - 1];
-        if (snap.docs.length < 500) break;
-        await delay(50);
-      }
-      setTransactions((prev) => mergeTransactionsById(prev, collected));
-      setMedLoadStatus((prev) => ({ ...prev, [medId]: 'complete' }));
-      logSyncEvent('med_full_load', `medId=${medId} items=${collected.length}`);
-      return collected;
+      const collected = await history.read(medId);
+      if (liveHistoryRef.current !== history) return null;
+      setSyncError((previous) => previous === MED_HISTORY_SYNC_ERROR ? '' : previous);
+      setTransactions((previous) => replaceMedicationHistory(previous, medId, collected, pendingWritesRef.current));
+      // Return an authoritative medication view, including local queued writes.
+      return replaceMedicationHistory([], medId, collected, pendingWritesRef.current);
     } catch (error) {
+      if (liveHistoryRef.current !== history) return null;
       setMedLoadStatus((prev) => ({ ...prev, [medId]: 'error' }));
-      setSyncError(
-        'No se pudo cargar el historial completo del medicamento (falta indice Firestore medId+createdAt o error de conexion).',
-      );
-      logSyncEvent('med_full_load_error', `medId=${medId} code=${error?.code || 'unknown'}`);
+      setSyncError(MED_HISTORY_SYNC_ERROR);
+      logSyncEvent('med_live_error', `medId=${medId} code=${error?.code || 'unknown'}`);
       return null;
-    } finally {
-      medLoadInFlightRef.current[medId] = false;
     }
   };
 
@@ -2410,7 +2431,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       alert('No se pudo verificar el historial completo de lotes. Intente de nuevo.');
       return null;
     }
-    const completeTransactions = mergeTransactionsById(transactions, loaded).filter(
+    const completeTransactions = loaded.filter(
       (transaction) => excludedTransactionId === null || String(transaction.id) !== String(excludedTransactionId),
     );
     const allocation = allocateLotsFEFO(completeTransactions, medId, amount);
@@ -2441,7 +2462,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       if (notify) alert('No se pudo cargar el historial completo para verificar los lotes.');
       return null;
     }
-    const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+    const completeTransactions = loaded;
     const globalStock = computeMedStock(completeTransactions, medId);
     const lotSummary = getLotInventorySummary(completeTransactions, medId);
     const result = {
@@ -2509,7 +2530,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         alert('No se pudo cargar el historial completo del medicamento para listar sus lotes. Intente de nuevo.');
         return;
       }
-      const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+      const completeTransactions = loaded;
       const summary = getLotInventorySummary(completeTransactions, medId);
       setLotExplorerResult({
         medId,
@@ -2547,7 +2568,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         alert('No se pudo cargar el historial completo del medicamento. Intente de nuevo.');
         return null;
       }
-      const completeTransactions = mergeTransactionsById(transactions, loaded).filter((item) => item.medId === medId);
+      const completeTransactions = loaded;
       const lots = getAvailableLots(completeTransactions, medId, { includeExpired: true });
       // El recuento se declara por lote fisico: un mismo lote ingresado en varias
       // fechas es una sola fila. Los origenes sin condensar quedan en `lots` para
@@ -2644,7 +2665,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       // registrado mientras se contaba invalidaria el recuento.
       const latestLoaded = await loadAllForMed(medId);
       if (!Array.isArray(latestLoaded)) throw new Error('No se pudo reverificar el estado de lotes.');
-      const completeTransactions = mergeTransactionsById(transactions, latestLoaded).filter((item) => item.medId === medId);
+      const completeTransactions = latestLoaded;
       const plan = planLotRecount(completeTransactions, medId, adjustLotRows);
       const latestGlobalStock = computeMedStock(completeTransactions, medId);
       if (!plan.valid) {
@@ -2812,7 +2833,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     try {
       const latestLoaded = await loadAllForMed(medId);
       if (!Array.isArray(latestLoaded)) throw new Error('No se pudo reverificar el lote.');
-      const completeTransactions = mergeTransactionsById(transactions, latestLoaded).filter((item) => item.medId === medId);
+      const completeTransactions = latestLoaded;
       const plan = planLotCorrection(completeTransactions, medId, adjustCorrectionSourceId, {
         lotNumber: adjustCorrectionLotNumber,
         expirationDate: adjustCorrectionExpirationDate,
@@ -2871,7 +2892,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       alert('No se pudo cargar el historial completo del medicamento. Intente de nuevo.');
       return;
     }
-    const completeTransactions = mergeTransactionsById(transactions, loaded);
+    const completeTransactions = loaded;
     const targetStock = computeMedStock(completeTransactions, medId);
     if (targetStock < 0) {
       alert('El medicamento tiene saldo negativo. Debe corregirlo antes de inicializar lotes.');
@@ -2958,7 +2979,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       try {
         const latestLoaded = await loadAllForMed(lotInitializationMedId);
         if (!Array.isArray(latestLoaded)) throw new Error('No se pudo verificar el saldo final.');
-        const completeTransactions = mergeTransactionsById(transactions, latestLoaded);
+        const completeTransactions = latestLoaded;
         const latestStock = computeMedStock(completeTransactions, lotInitializationMedId);
         if (latestStock !== lotInitializationTargetStock) {
           alert(`El saldo cambio de ${lotInitializationTargetStock} a ${latestStock}. Vuelva a abrir el asistente para conciliarlo.`);
@@ -3004,7 +3025,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         });
         batch.set(doc(db, dataDocPath), { lotInitializationByMedId: nextInitializationState }, { merge: true });
         await batch.commit();
-        setTransactions((prev) => [...initializationTransactions, ...prev]);
+        setTransactions((prev) => mergeTransactionsById(prev, initializationTransactions));
         setLotInitializationByMedId(nextInitializationState);
       } catch (error) {
         console.error(error);
@@ -3074,7 +3095,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         notifyWriteFailed(isQuickIngreso ? 'el ingreso' : 'el rebajo');
         return;
       }
-      setTransactions([newTransaction, ...transactions]);
+      setTransactions((previous) => mergeTransactionsById(previous, [newTransaction]));
     } else if (modalType === 'kardex-edit') {
       const current = transactions.find((t) => t.id === editingTransactionId);
       if (!current) {
@@ -3165,7 +3186,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         notifyWriteFailed('la edicion');
         return;
       }
-      setTransactions(transactions.map((t) => (t.id === editingTransactionId ? updated : t)));
+      setTransactions((previous) => previous.map((t) => (t.id === editingTransactionId ? updated : t)));
     } else if (modalType === 'auditoria') {
       const newExp = {
         id: Date.now(),
@@ -3290,7 +3311,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         notifyWriteFailed('el cierre');
         return;
       }
-      setTransactions([newCierre, ...transactions]);
+      setTransactions((previous) => mergeTransactionsById(previous, [newCierre]));
       if (cierreTurno === CLOSURE_24H_TURNO) {
         // El candado persistido es lo que leen las reglas de Firestore: sin el,
         // el bloqueo solo existiria en pantalla. Va por la misma cola que el
@@ -3332,7 +3353,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
           return;
         }
       }
-      setTransactions(updatedTransactions);
+      setTransactions((previous) => previous.map((item) => item.id === editingTransactionId
+        ? { ...item, crossCheckPharmacist: selectedVerifier, crossCheckedAt: now }
+        : item));
     } else if (modalType === 'open-rx-use') {
       if (!pendingOpenRxTransaction) return;
       const selectedPharmacist = toUpper(formData.get('openRxPharmacist'));
@@ -3367,7 +3390,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         notifyWriteFailed('el ajuste de receta abierta');
         return;
       }
-      setTransactions(transactions.map((t) => (t.id === updated.id ? updated : t)));
+      setTransactions((previous) => previous.map((t) => (t.id === updated.id ? updated : t)));
       setPendingOpenRxAdjustTransaction(null);
       setOpenRxAdjustValue('');
     } else if (modalType === 'auditoria-repeat') {
@@ -3517,7 +3540,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
         notifyWriteFailed('el reintegro');
         return;
       }
-      setTransactions([newTransaction, ...transactions]);
+      setTransactions((previous) => mergeTransactionsById(previous, [newTransaction]));
     }
     setShowModal(false);
     setEditingMedId(null);
@@ -4169,7 +4192,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                         `Eliminar ${med?.name || 'medicamento'}? Se borraran ${movementCount} movimientos asociados.`,
                       );
                       if (!confirmDelete) return;
-                      setTransactions(transactions.filter((t) => t.medId !== selectedMedId));
+                      setTransactions((previous) => previous.filter((t) => t.medId !== selectedMedId));
                       const updated = medications.filter((m) => m.id !== selectedMedId);
                       setMedications(updated);
                       setSelectedMedId(updated[0]?.id || '');
@@ -4388,7 +4411,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                                     notifyWriteFailed('la eliminacion');
                                     return;
                                   }
-                                  setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                  setTransactions((previous) => previous.filter((tx) => tx.id !== t.id));
                                 });
                               }}
                               className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
@@ -4631,7 +4654,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                                       notifyWriteFailed('la eliminacion');
                                       return;
                                     }
-                                    setTransactions(transactions.filter((tx) => tx.id !== t.id));
+                                    setTransactions((previous) => previous.filter((tx) => tx.id !== t.id));
                                   });
                                 }}
                                 className="bg-rose-600 text-white px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
@@ -6324,6 +6347,15 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 </>
               ) : modalType === 'sync-log' ? (
                 <div className="space-y-3">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-slate-700">
+                    <p className="font-bold">Historial en tiempo real · sesion actual</p>
+                    <p>Suscripciones iniciadas: {historyReadMetrics?.subscriptions ?? 0}</p>
+                    <p>Documentos iniciales: {historyReadMetrics?.initialDocuments ?? 0}</p>
+                    <p>Documentos nuevos o modificados: {historyReadMetrics?.changedDocuments ?? 0}</p>
+                    <p>Eliminaciones recibidas: {historyReadMetrics?.removedDocuments ?? 0}</p>
+                    <p>Consultas reutilizadas sin descargar todo el historial: {historyReadMetrics?.reuses ?? 0}</p>
+                    <p className="mt-2">Son documentos observados en este equipo, no lecturas facturadas. No incluyen otras consultas, equipos ni costos de reconexion. Compare el consumo diario en Firebase.</p>
+                  </div>
                   <p className="text-xs text-slate-500">Ultimos errores de sincronizacion (max 50).</p>
                   <div className="grid grid-cols-2 gap-2 text-[10px] font-bold uppercase">
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Eventos: {syncMetrics.totalEvents}</div>
