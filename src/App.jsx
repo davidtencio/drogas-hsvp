@@ -69,6 +69,8 @@ import {
   validateLotEntry,
   validateLotInitialization,
 } from './utils/lots';
+import { buildLotStockReport } from './utils/lotReport';
+import { downloadLotStockReportPDF } from './utils/lotReportPdf';
 
 // --- CONFIGURACION ---
 const INITIAL_MEDICATIONS = [
@@ -185,6 +187,7 @@ const App = () => {
   const [lotExplorerResult, setLotExplorerResult] = useState(null);
   const [lotExplorerLoading, setLotExplorerLoading] = useState(false);
   const [lotExplorerShowDepleted, setLotExplorerShowDepleted] = useState(false);
+  const [lotReportGenerating, setLotReportGenerating] = useState(false);
   const [adjustLotMode, setAdjustLotMode] = useState('recuento');
   const [adjustLotContext, setAdjustLotContext] = useState(null);
   const [adjustLotRows, setAdjustLotRows] = useState([]);
@@ -2547,6 +2550,65 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setCloudStatus('Sincronizado');
     } finally {
       setLotExplorerLoading(false);
+    }
+  };
+
+  // Reporte PDF de existencias por lote.
+  //
+  // Solo cubre los medicamentos con lotes inicializados: son los unicos cuya
+  // existencia por lote es completa. En los demas el renglon saldria vacio y
+  // ademas obligaria a leer todo su historial sin necesidad.
+  //
+  // Carga el historial COMPLETO de cada medicamento antes de calcular, igual
+  // que el explorador de lotes: con la carga parcial del Kardex quedan rebajos
+  // fuera y el disponible por lote sale inflado. Respeta el interruptor
+  // "Incluir agotados" de esta misma tarjeta.
+  const generateLotStockPDF = async () => {
+    if (lotReportGenerating) return;
+    if (!authUser || !cloudReady) {
+      alert('Conectese para generar el reporte con el historial confirmado por el servidor.');
+      return;
+    }
+    const initializedMeds = sortedMedications.filter((med) => lotInitializationByMedId[med.id]?.completed);
+    if (initializedMeds.length === 0) {
+      alert('Todavia no hay medicamentos con lotes inicializados, que son los que incluye este reporte.');
+      return;
+    }
+    setLotReportGenerating(true);
+    setCloudStatus('Generando reporte de lotes...');
+    try {
+      const entries = [];
+      for (const med of initializedMeds) {
+        const loaded = await loadAllForMed(med.id);
+        const initialized = Boolean(lotInitializationByMedId[med.id]?.completed);
+        if (!Array.isArray(loaded)) {
+          entries.push({ medId: med.id, medName: med.name, initialized, failed: true });
+          continue;
+        }
+        entries.push({
+          medId: med.id,
+          medName: med.name,
+          initialized,
+          globalStock: computeMedStock(loaded, med.id),
+          summary: getLotInventorySummary(loaded, med.id),
+        });
+      }
+      const report = buildLotStockReport(entries, { includeDepleted: lotExplorerShowDepleted });
+      await downloadLotStockReportPDF({
+        report,
+        generatedBy: authUser?.email || '',
+        includeDepleted: lotExplorerShowDepleted,
+        pendingCount,
+      });
+      setCloudStatus(report.totals.failures > 0 ? 'Sin conexion' : 'Sincronizado');
+      if (report.totals.failures > 0) {
+        alert(
+          `El reporte se genero con ${report.totals.failures} medicamento(s) sin historial confirmado. ` +
+            'Revise la conexion y vuelva a generarlo.',
+        );
+      }
+    } finally {
+      setLotReportGenerating(false);
     }
   };
 
@@ -5178,10 +5240,23 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
               </div>
             </div>
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="font-bold text-slate-800 text-sm">Lotes y Expiraciones Disponibles</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Consulta de solo lectura. Muestra el detalle por lote en orden FEFO con el historial completo del medicamento.
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Lotes y Expiraciones Disponibles</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Consulta de solo lectura. Muestra el detalle por lote en orden FEFO con el historial completo del medicamento.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={generateLotStockPDF}
+                  disabled={lotReportGenerating}
+                  title="Existencias por lote de los medicamentos inicializados, en PDF"
+                  className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-sm h-10 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <FileText size={16} /> {lotReportGenerating ? 'Generando...' : 'Reporte PDF'}
+                </button>
+              </div>
               <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <div className="md:col-span-2">
                   <SelectLabel
