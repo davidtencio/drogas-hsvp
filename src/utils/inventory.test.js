@@ -9,6 +9,7 @@ import {
   computeMedStock,
   nextOpenRxUse,
   getOpenRxUsed,
+  getOpenRxRemaining,
   computeTotalReponer,
   formatCurrency,
   parseCurrency,
@@ -238,6 +239,18 @@ describe('getOpenRxUsed / nextOpenRxUse (recetas abiertas)', () => {
     // progreso subiria sin que se haya despachado nada.
     const items = [out(2, 1), out(9, 2, { type: 'IN', rxUsed: 30 })];
     expect(getOpenRxUsed(items, 'm', 'R1', 30)).toBe(2);
+  });
+
+  it('getOpenRxRemaining: unidades que todavia admite la receta', () => {
+    // Regresion receta 10082338 L (15 u): 2 + 3 + 9 = 14 usados. El rebajo
+    // siguiente de 3 se acepto y quedo como "15 de 15" con 2 unidades de mas.
+    const rx15 = { rxQuantity: 15 };
+    const items = [out(2, 1, rx15), out(3, 2, rx15), out(9, 3, rx15)];
+    expect(getOpenRxRemaining(items, 'm', 'R1', 15)).toBe(1);
+    expect(getOpenRxRemaining([...items, out(1, 4, rx15)], 'm', 'R1', 15)).toBe(0);
+    expect(getOpenRxRemaining([], 'm', 'R1', 15)).toBe(15);
+    // Un exceso ya grabado no da restante negativo.
+    expect(getOpenRxRemaining([...items, out(3, 4, rx15)], 'm', 'R1', 15)).toBe(0);
   });
 
   it('un ajuste manual reescribe el acumulado desde ese movimiento', () => {

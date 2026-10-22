@@ -193,6 +193,15 @@ export const nextOpenRxUse = (items, medId, prescription, rxQuantity, amountToAd
   return Math.min(used + safeAmount, Number(rxQuantity) || 0);
 };
 
+// Unidades que todavia admite una receta ABIERTA. nextOpenRxUse recorta el
+// progreso a rxQuantity, asi que un rebajo mayor a lo restante quedaba grabado
+// como "15 de 15" aunque se despacharan unidades de mas. Quien registre un
+// rebajo debe validar contra este valor antes de guardar.
+export const getOpenRxRemaining = (items, medId, prescription, rxQuantity) => {
+  const total = Number(rxQuantity) || 0;
+  return Math.max(0, total - getOpenRxUsed(items, medId, prescription, rxQuantity));
+};
+
 // Cantidad a reponer para alcanzar la cuota, dado el stock al cierre.
 // Nunca negativa (si el stock supera la cuota, no hay que reponer).
 export const computeTotalReponer = (quota, currentStockAtClose) =>

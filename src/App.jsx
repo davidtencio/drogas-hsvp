@@ -37,7 +37,7 @@ import {
   getLastBalanceAnchor,
   mergeTransactionsById,
   nextOpenRxUse,
-  getOpenRxUsed,
+  getOpenRxRemaining,
   computeTotalReponer,
   computeMedStock,
   formatCurrency,
@@ -914,7 +914,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       )
       .sort(compareTransactionsDesc);
     const latest = matches[0];
-    return Number.isFinite(Number(latest?.amount)) ? Number(latest.amount) : Number(transaction.amount) || 0;
+    const lastAmount = Number.isFinite(Number(latest?.amount)) ? Number(latest.amount) : Number(transaction.amount) || 0;
+    // Sugerir el ultimo rebajo, pero nunca mas de lo que le queda a la receta.
+    const remaining = getOpenRxRemaining(items, transaction.medId, transaction.prescription, transaction.rxQuantity);
+    return Math.min(lastAmount, remaining);
   };
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -998,27 +1001,20 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     if (transaction.rxType !== 'ABIERTA' || transaction.rxQuantity <= 0) return;
     const amountToUse = parseInt(overrideAmount, 10);
     if (!Number.isFinite(amountToUse) || amountToUse <= 0) return;
-    // Receta ya completa: se avisa y se corta. Antes este corte era un `return`
-    // mudo que comparaba contra el `rxUsed` grabado en el movimiento; con un
-    // rxUsed heredado de un uso anterior de la misma receta el boton quedaba
-    // muerto sin explicacion (no guardaba, no rebajaba y no avisaba nada). Va
-    // antes del chequeo de saldo y de la asignacion FEFO porque si la receta no
-    // admite mas unidades no tiene sentido tocar lotes ni leer el historial.
-    const rxQuantity = Number(transaction.rxQuantity) || 0;
-    const usedSoFar = getOpenRxUsed(
+    // Receta completa o rebajo mayor a lo que le queda: se corta antes del
+    // chequeo de saldo y de la asignacion FEFO, porque si la receta no admite
+    // esas unidades no tiene sentido tocar lotes ni leer el historial. Antes
+    // solo se cortaba con la receta completa y nextOpenRxUse recortaba el
+    // exceso a rxQuantity, asi que 3 unidades con 1 restante quedaban como
+    // "15 de 15". El modal ya muestra el aviso y bloquea el boton
+    // (openRxUseStatus); esto cubre que otra estacion rebaje mientras esta abierto.
+    const remaining = getOpenRxRemaining(
       transactions,
       transaction.medId,
       transaction.prescription,
       transaction.rxQuantity,
     );
-    if (usedSoFar >= rxQuantity) {
-      alert(
-        `La receta ${transaction.prescription || ''} ya figura completa (${usedSoFar} de ${rxQuantity}).\n\n` +
-        'Si el progreso no corresponde, corrijalo con click derecho sobre "X de Y".\n' +
-        'Si el paciente requiere mas unidades, registre un movimiento nuevo con su receta.',
-      );
-      return;
-    }
+    if (amountToUse > remaining) return false;
     const proceed = await confirmIfNegativeStock(transaction.medId, amountToUse);
     if (!proceed) return;
     const lotAllocations = await prepareLotAllocations(transaction.medId, amountToUse);
@@ -1056,6 +1052,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       return;
     }
     setTransactions((previous) => mergeTransactionsById(previous, [newTransaction]));
+    return true;
   };
 
   // Un movimiento congelado admite unicamente anotaciones que no alteran
@@ -2203,6 +2200,23 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     return balanceMap;
      
   }, [transactions, selectedMedId]);
+  // Estado de la receta en el modal de rebajo: cuanto le queda y, si la cantidad
+  // escrita no cabe, el aviso que se muestra y que bloquea el boton de guardar.
+  const openRxUseStatus = useMemo(() => {
+    const t = pendingOpenRxTransaction;
+    if (!t) return null;
+    const total = Number(t.rxQuantity) || 0;
+    const remaining = getOpenRxRemaining(transactions, t.medId, t.prescription, t.rxQuantity);
+    const amount = parseInt(openRxAmountValue, 10);
+    const rx = t.prescription || '';
+    let error = '';
+    if (remaining <= 0) {
+      error = `La receta ${rx} ya esta completa (${total} de ${total}). Si el paciente requiere mas unidades, registre un movimiento nuevo con su receta. Si el progreso no corresponde, corrijalo con click derecho sobre "X de Y".`;
+    } else if (Number.isFinite(amount) && amount > remaining) {
+      error = `A la receta ${rx} le ${remaining === 1 ? 'queda 1 unidad' : `quedan ${remaining} unidades`} de ${total}. No puede rebajar ${amount}.`;
+    }
+    return { total, used: total - remaining, remaining, error };
+  }, [pendingOpenRxTransaction, transactions, openRxAmountValue]);
   // Progreso "X de Y" de recetas ABIERTAS precalculado en una sola pasada.
   // Antes se computaba por fila con un filter+sort sobre todas las transacciones
   // (O(n^2) en el render del Kardex); ahora se agrupa una vez por (receta, cantidad).
@@ -3424,7 +3438,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       const selectedAmount = parseInt(formData.get('openRxAmount'), 10);
       if (!selectedPharmacist) return;
       if (!Number.isFinite(selectedAmount) || selectedAmount <= 0) return;
-      await handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
+      // false = la receta no admite esa cantidad; el modal sigue abierto con el aviso.
+      const used = await handleOpenRxUse(pendingOpenRxTransaction, selectedPharmacist, selectedAmount);
+      if (used === false) return;
       setPendingOpenRxTransaction(null);
       setOpenRxAmountValue('');
     } else if (modalType === 'open-rx-adjust') {
@@ -6162,15 +6178,43 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 </>
               ) : modalType === 'open-rx-use' ? (
                 <>
+                  {openRxUseStatus && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-[10px] font-bold uppercase text-blue-700">Receta</p>
+                      <p className="mt-1 text-sm font-bold text-slate-800">{pendingOpenRxTransaction?.prescription}</p>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div className="rounded-md bg-white p-2">
+                          <p className="text-[9px] font-bold uppercase text-slate-400">Prescrito</p>
+                          <p className="text-sm font-bold text-slate-800">{openRxUseStatus.total}</p>
+                        </div>
+                        <div className="rounded-md bg-white p-2">
+                          <p className="text-[9px] font-bold uppercase text-slate-400">Rebajado</p>
+                          <p className="text-sm font-bold text-slate-800">{openRxUseStatus.used}</p>
+                        </div>
+                        <div className="rounded-md bg-white p-2">
+                          <p className="text-[9px] font-bold uppercase text-slate-400">Disponible</p>
+                          <p className={`text-sm font-bold ${openRxUseStatus.remaining > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {openRxUseStatus.remaining}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <InputLabel
                     label="Cantidad a Rebajar"
                     name="openRxAmount"
                     type="number"
                     min="1"
+                    max={openRxUseStatus?.remaining > 0 ? openRxUseStatus.remaining : undefined}
                     value={openRxAmountValue}
                     onChange={(e) => setOpenRxAmountValue(e.target.value)}
                     required
                   />
+                  {openRxUseStatus?.error && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                      {openRxUseStatus.error}
+                    </div>
+                  )}
                   <SelectLabel
                     label="Farmaceutico que Realiza Rebajo"
                     name="openRxPharmacist"
@@ -6651,7 +6695,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                 modalType !== 'sync-log' && (
                   <button
                     type="submit"
-                    disabled={modalType === 'lot-initialization' && (lotInitializationSaving || !lotInitializationValidation.valid || !lotInitializationPharmacist)}
+                    disabled={
+                      (modalType === 'lot-initialization' && (lotInitializationSaving || !lotInitializationValidation.valid || !lotInitializationPharmacist)) ||
+                      (modalType === 'open-rx-use' && Boolean(openRxUseStatus?.error))
+                    }
                     className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-sm shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 transition-all uppercase tracking-widest mt-4"
                   >
                     {modalType === 'lot-initialization'
