@@ -47,7 +47,6 @@ import {
   getClosureCutoffByMedId,
   mergeClosureCutoffs,
   isTransactionLocked,
-  countLockedTransactions,
 } from './utils/inventory';
 import { getBackupChecksumSource, getBackupSummary } from './utils/backup';
 import {
@@ -2006,7 +2005,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
   // Computations
   const sortedMedications = useMemo(() => {
     const priorityIndex = new Map(PRIORITY_MEDICATION_ORDER.map((name, index) => [name, index]));
-    return [...medications].sort((a, b) => {
+    // Los medicamentos archivados conservan su historial, pero salen de toda la
+    // operacion diaria (dashboard, kardex, cierres, reportes y lotes).
+    return medications.filter((m) => !m.archived).sort((a, b) => {
       const aName = toUpper(a.name);
       const bName = toUpper(b.name);
       const aPriority = priorityIndex.has(aName) ? priorityIndex.get(aName) : Number.POSITIVE_INFINITY;
@@ -2015,6 +2016,13 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       return aName.localeCompare(bName, 'es');
     });
   }, [medications]);
+
+  // Si el medicamento seleccionado (p. ej. el guardado en la nube) esta archivado,
+  // pasar al primero activo para no dejar el Kardex apuntando a uno oculto.
+  useEffect(() => {
+    if (sortedMedications.length === 0) return;
+    if (!sortedMedications.some((m) => m.id === selectedMedId)) setSelectedMedId(sortedMedications[0].id);
+  }, [sortedMedications, selectedMedId]);
 
   const currentInventory = useMemo(() => {
     const cutoff = new Date();
@@ -2339,8 +2347,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     const hasSyncError = Boolean(syncError);
     const hasQueueRisk = queueOverflow || writeBlockedByStorage;
     const hasRecentBackup = backupAuditLog.length > 0;
-    const integrityGate = summarizeLotIntegrityGate(medications, lotInitializationByMedId, lotIntegrityAuditByMedId);
-    const allInitialized = medications.length > 0 && integrityGate.pending.length === 0;
+    const activeMedications = medications.filter((m) => !m.archived);
+    const integrityGate = summarizeLotIntegrityGate(activeMedications, lotInitializationByMedId, lotIntegrityAuditByMedId);
+    const allInitialized = activeMedications.length > 0 && integrityGate.pending.length === 0;
     const checks = [
       { key: 'no_pending', label: 'Sin pendientes de sincronizacion', ok: !hasPending },
       { key: 'no_sync_error', label: 'Sin errores activos de sincronizacion', ok: !hasSyncError },
@@ -2505,7 +2514,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
 
   const verifyAllLotIntegrity = async () => {
     if (lotIntegrityVerifying) return;
-    const initialized = medications.filter((med) => lotInitializationByMedId[med.id]?.completed);
+    const initialized = sortedMedications.filter((med) => lotInitializationByMedId[med.id]?.completed);
     if (initialized.length === 0) {
       alert('Todavia no hay medicamentos inicializados para verificar.');
       return;
@@ -4253,31 +4262,43 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                     onClick={async () => {
                       const hasKey = await requestSecurityKey();
                       if (!hasKey) return;
+                      // Archivar en lugar de borrar: el historial de una sustancia controlada
+                      // (y en especial el congelado por CIERRE 24 HORAS) es inmutable. Borrar
+                      // solo el medicamento dejaba sus movimientos en Firestore y la carga
+                      // inicial lo "recuperaba" a partir de ellos al refrescar.
                       const med = medications.find((m) => m.id === selectedMedId);
-                      // Eliminar el medicamento borra sus movimientos en cascada. Si alguno
-                      // quedo congelado por un CIERRE 24 HORAS, esa via destruiria historial
-                      // cerrado por la puerta de atras: se bloquea igual que el borrado directo.
-                      const lockedCount = countLockedTransactions(transactions, selectedMedId, closureCutoffByMedId);
-                      if (lockedCount > 0) {
+                      if (!med) return;
+                      const stock = Number(currentInventory.find((m) => m.id === selectedMedId)?.stock) || 0;
+                      if (stock !== 0) {
                         alert(
-                          `No se puede eliminar ${med?.name || 'este medicamento'}.\n\n` +
-                          `Tiene ${lockedCount} movimiento(s) congelados por un CIERRE 24 HORAS y el historial cerrado es inmutable.`,
+                          `No se puede archivar ${med.name}.\n\n` +
+                          `Su saldo actual es ${stock}. Lleve el saldo a 0 antes de archivarlo para no ocultar existencias.`,
                         );
                         return;
                       }
-                      const movementCount = transactions.filter((t) => t.medId === selectedMedId).length;
-                      const confirmDelete = window.confirm(
-                        `Eliminar ${med?.name || 'medicamento'}? Se borraran ${movementCount} movimientos asociados.`,
+                      const confirmArchive = window.confirm(
+                        `Archivar ${med.name}?\n\nDejara de aparecer en Dashboard, Kardex, cierres y reportes. ` +
+                        'Su historial se conserva y puede reactivarse desde Configuracion.',
                       );
-                      if (!confirmDelete) return;
-                      setTransactions((previous) => previous.filter((t) => t.medId !== selectedMedId));
-                      const updated = medications.filter((m) => m.id !== selectedMedId);
+                      if (!confirmArchive) return;
+                      const updated = medications.map((m) =>
+                        m.id === selectedMedId ? { ...m, archived: true, archivedAt: Date.now() } : m,
+                      );
+                      const nextSelected = sortedMedications.find((m) => m.id !== selectedMedId)?.id || '';
                       setMedications(updated);
-                      setSelectedMedId(updated[0]?.id || '');
+                      setSelectedMedId(nextSelected);
+                      // Escritura directa: la sincronizacion automatica del documento raiz se
+                      // omite mientras haya pendientes en cola, y el archivado no debe perderse.
+                      try {
+                        await setDoc(doc(db, dataDocPath), { medications: updated, selectedMedId: nextSelected }, { merge: true });
+                      } catch (error) {
+                        console.error(error);
+                        alert('No se pudo guardar el archivado en la nube. Revise la conexion e intente de nuevo.');
+                      }
                     }}
                     className="bg-rose-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700"
                   >
-                    Eliminar
+                    Archivar
                   </button>
                 </div>
                 <div className="text-right">
@@ -5156,7 +5177,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                     <p className="text-xs text-slate-500 mt-1">Distribuya el saldo actual de cada medicamento antes de activar descargas FEFO.</p>
                   </div>
                   <span className="text-[10px] font-bold text-slate-600">
-                    {Object.values(lotInitializationByMedId).filter((item) => item?.completed).length} / {medications.length}
+                    {sortedMedications.filter((med) => lotInitializationByMedId[med.id]?.completed).length} / {sortedMedications.length}
                   </span>
                 </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -5669,8 +5690,13 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none font-medium uppercase"
                         />
                       ) : (
-                        <span className={`text-sm font-semibold ${AUTO_MED_NAME_PATTERN.test(med.name || '') ? 'text-rose-600' : 'text-slate-700'}`}>
+                        <span className={`text-sm font-semibold ${AUTO_MED_NAME_PATTERN.test(med.name || '') ? 'text-rose-600' : med.archived ? 'text-slate-400' : 'text-slate-700'}`}>
                           {med.name}
+                          {med.archived && (
+                            <span className="ml-2 text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">
+                              Archivado
+                            </span>
+                          )}
                         </span>
                       )}
                     </div>
@@ -5697,13 +5723,38 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => startConfigMedicationEdit(med)}
-                          className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700"
-                        >
-                          Renombrar
-                        </button>
+                        <>
+                          {med.archived && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm(`Reactivar ${med.name}? Volvera a aparecer en Dashboard y Kardex.`)) return;
+                                const updated = medications.map((m) => {
+                                  if (m.id !== med.id) return m;
+                                  const { archived: _archived, archivedAt: _archivedAt, ...rest } = m;
+                                  return rest;
+                                });
+                                setMedications(updated);
+                                try {
+                                  await setDoc(doc(db, dataDocPath), { medications: updated }, { merge: true });
+                                } catch (error) {
+                                  console.error(error);
+                                  alert('No se pudo guardar la reactivacion en la nube. Revise la conexion e intente de nuevo.');
+                                }
+                              }}
+                              className="bg-emerald-600 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-700"
+                            >
+                              Reactivar
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => startConfigMedicationEdit(med)}
+                            className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-blue-700"
+                          >
+                            Renombrar
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
