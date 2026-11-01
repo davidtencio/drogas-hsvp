@@ -14,11 +14,88 @@ import {
   formatCurrency,
   parseCurrency,
   isClosure24h,
+  isThirdShiftClosure,
+  getThirdShiftDispensedByClosureId,
   getClosureCutoffByMedId,
   mergeClosureCutoffs,
   isTransactionLocked,
   countLockedTransactions,
 } from './inventory';
+
+describe('despachos entre cierres de Tercer Turno', () => {
+  const close = (id, date, totalMedicamento, cierreTurno = 'TERCER TURNO') => ({
+    id, date, medId: 'med-a', isCierre: true, cierreTurno, totalMedicamento,
+  });
+  const out = (id, date, amount, extra = {}) => ({ id, date, medId: 'med-a', type: 'OUT', amount, ...extra });
+
+  it('reproduce el ejemplo: 24 al cierre anterior, despachos de 3 y 2, 19 (5) al siguiente', () => {
+    const items = [
+      close(1, '30/10/2026 6:27 AM', 24),
+      close(2, '30/10/2026 6:27 AM', 24, 'CIERRE 24 HORAS'),
+      out(3, '30/10/2026 9:19 AM', 3),
+      close(4, '30/10/2026 3:08 PM', 21, 'PRIMER TURNO'),
+      out(5, '31/10/2026 1:27 AM', 2),
+      close(6, '31/10/2026 6:31 AM', 19),
+      out(7, '31/10/2026 9:23 PM', 2),
+    ];
+    expect(getThirdShiftDispensedByClosureId(items.toReversed(), 'med-a')).toEqual({ 6: 5 });
+    expect(items[0].id).toBe(1);
+  });
+
+  it('suma despachos, sin restar ingresos o reintegros ni contar ajustes u otros medicamentos', () => {
+    const items = [
+      close(1, '30/10/2026 6:00 AM', 24),
+      out(2, '30/10/2026 7:00 AM', '3'),
+      out(3, '30/10/2026 8:00 AM', 10, { type: 'IN' }),
+      out(4, '30/10/2026 9:00 AM', 8, { affectsGlobalStock: false }),
+      out(5, '30/10/2026 10:00 AM', 6, { isLotAdjustment: true }),
+      close(6, '30/10/2026 11:00 AM', 100, 'AJUSTE MANUAL SALDO'),
+      out(7, '30/10/2026 12:00 PM', 50, { medId: 'med-b' }),
+      out(8, '30/10/2026 1:00 PM', 2, { rxType: 'ABIERTA', rxUsed: 20, rxQuantity: 30 }),
+      close(9, '31/10/2026 6:00 AM', 98),
+    ];
+    expect(getThirdShiftDispensedByClosureId(items, 'med-a')).toEqual({ 9: 5 });
+  });
+
+  it('delimita cada periodo por cierres, incluso cuando dura mas de 24 horas, y muestra cero sin despachos', () => {
+    const items = [
+      close(1, '28/10/2026 6:00 AM', 24, 'TERCERO'),
+      out(2, '28/10/2026 7:00 AM', 3),
+      close(3, '30/10/2026 6:00 AM', 21),
+      out(4, '30/10/2026 7:00 AM', 2),
+      close(5, '31/10/2026 6:00 AM', 19),
+      close(6, '01/11/2026 6:00 AM', 19),
+    ];
+    expect(getThirdShiftDispensedByClosureId(items, 'med-a')).toEqual({ 3: 3, 5: 2, 6: 0 });
+  });
+
+  it('no inventa un total si no existe cierre anterior', () => {
+    expect(getThirdShiftDispensedByClosureId([], 'med-a')).toEqual({});
+    expect(getThirdShiftDispensedByClosureId([
+      out(1, '30/10/2026 5:00 AM', 7),
+      close(2, '30/10/2026 6:00 AM', 24),
+    ], 'med-a')).toEqual({});
+  });
+
+  it('usa milisegundos para separar salidas del mismo minuto y el orden del Kardex para empates', () => {
+    const items = [
+      { ...out(1, '30/10/2026 6:00 AM', 9), createdAt: 100 },
+      { ...close(2, '30/10/2026 6:00 AM', 24), createdAt: 101 },
+      { ...out(3, '30/10/2026 6:00 AM', 3), createdAt: 102 },
+      { ...out(4, '30/10/2026 6:00 AM', 2), createdAt: 103 },
+      { ...close(5, '30/10/2026 6:00 AM', 19), createdAt: 103 },
+      { ...out(6, '30/10/2026 6:00 AM', 8), createdAt: 104 },
+    ];
+    expect(getThirdShiftDispensedByClosureId(items.toReversed(), 'med-a')).toEqual({ 5: 5 });
+  });
+
+  it('reconoce la denominacion antigua y normalizada solo en cierres', () => {
+    expect(isThirdShiftClosure({ isCierre: true, cierreTurno: ' tercero ' })).toBe(true);
+    expect(isThirdShiftClosure({ isCierre: true, cierreTurno: 'TERCER TURNO' })).toBe(true);
+    expect(isThirdShiftClosure({ cierreTurno: 'TERCER TURNO' })).toBe(false);
+    expect(isThirdShiftClosure({ isCierre: true, cierreTurno: 'CIERRE 24 HORAS' })).toBe(false);
+  });
+});
 
 describe('parseDateTime', () => {
   it('parsea formato es-CR con AM/PM', () => {

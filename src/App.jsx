@@ -44,6 +44,8 @@ import {
   parseCurrency,
   CLOSURE_24H_TURNO,
   isClosure24h,
+  isThirdShiftClosure,
+  getThirdShiftDispensedByClosureId,
   getClosureCutoffByMedId,
   mergeClosureCutoffs,
   isTransactionLocked,
@@ -2186,6 +2188,18 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
     return { recentTransactions: recent.sort(sortByDate), historicTransactions: historic.sort(sortByDate) };
      
   }, [transactions, selectedMedId, kardexSearch]);
+  const thirdShiftDispensedById = useMemo(
+    () => medLoadStatus[selectedMedId] === 'complete'
+      ? getThirdShiftDispensedByClosureId(transactions, selectedMedId)
+      : {},
+    [transactions, selectedMedId, medLoadStatus],
+  );
+  const getThirdShiftDispensedHint = (t) => {
+    if (!isThirdShiftClosure(t)) return undefined;
+    if (medLoadStatus[selectedMedId] !== 'complete') return 'Despachos disponibles al cargar el historial completo.';
+    if (thirdShiftDispensedById[t.id] === undefined) return 'Sin cierre anterior de Tercer Turno para calcular los despachos.';
+    return 'Unidades despachadas desde el cierre anterior de Tercer Turno hasta este cierre.';
+  };
   const kardexBalanceById = useMemo(() => {
     const medItems = transactions
       .filter((t) => t.medId === selectedMedId)
@@ -4369,7 +4383,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           isClosure24h(t) ? (
                             <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
                           ) : (
-                            <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                            <span className="text-xs font-bold uppercase text-slate-600" title={getThirdShiftDispensedHint(t)}>
+                              Total Medicamento: {t.totalMedicamento}
+                              {thirdShiftDispensedById[t.id] !== undefined && ` (${thirdShiftDispensedById[t.id]})`}
+                            </span>
                           )
                         ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                           <button
@@ -4617,7 +4634,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             isClosure24h(t) ? (
                               <span className="text-xs font-bold uppercase text-slate-600">Total Reponer: {totalReponerByCierreId[t.id] ?? 0}</span>
                             ) : (
-                              <span className="text-xs font-bold uppercase text-slate-600">Total Medicamento: {t.totalMedicamento}</span>
+                              <span className="text-xs font-bold uppercase text-slate-600" title={getThirdShiftDispensedHint(t)}>
+                                Total Medicamento: {t.totalMedicamento}
+                                {thirdShiftDispensedById[t.id] !== undefined && ` (${thirdShiftDispensedById[t.id]})`}
+                              </span>
                             )
                           ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
                             <button

@@ -87,6 +87,31 @@ export const CLOSURE_24H_TURNO = 'CIERRE 24 HORAS';
 
 export const isClosure24h = (t) => Boolean(t?.isCierre) && t?.cierreTurno === CLOSURE_24H_TURNO;
 
+export const isThirdShiftClosure = (t) =>
+  Boolean(t?.isCierre) && ['TERCERO', 'TERCER TURNO'].includes(String(t.cierreTurno || '').trim().toUpperCase());
+
+// Despachos entre cierres consecutivos de tercer turno del mismo medicamento.
+// Requiere el historial completo, antes de filtros y paginacion. El primer
+// cierre no tiene un periodo conocido y se omite (no equivale a cero salidas).
+export const getThirdShiftDispensedByClosureId = (transactions, medId) => {
+  const items = transactions.filter((t) => t.medId === medId).slice().sort(compareTransactionsAsc);
+  const totals = {};
+  let hasPreviousClosure = false;
+  let dispensed = 0;
+  for (const t of items) {
+    if (isThirdShiftClosure(t)) {
+      if (hasPreviousClosure) totals[t.id] = dispensed;
+      hasPreviousClosure = true;
+      dispensed = 0;
+    } else if (hasPreviousClosure && t.type === 'OUT' && !t.isCierre &&
+      t.affectsGlobalStock !== false && !t.isLotAdjustment) {
+      const amount = Number(t.amount);
+      if (Number.isFinite(amount) && amount > 0) dispensed += amount;
+    }
+  }
+  return totals;
+};
+
 // Mapa medId -> timestamp del ultimo CIERRE 24 HORAS de ese medicamento.
 // Ese timestamp es el "cutoff" del medicamento: todo movimiento suyo con
 // timestamp <= cutoff queda congelado (no se puede editar ni eliminar).
