@@ -4385,7 +4385,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                           ) : (
                             <span className="text-xs font-bold uppercase text-slate-600" title={getThirdShiftDispensedHint(t)}>
                               Total Medicamento: {t.totalMedicamento}
-                              {thirdShiftDispensedById[t.id] !== undefined && ` (${thirdShiftDispensedById[t.id]})`}
+                              {thirdShiftDispensedById[t.id] !== undefined && (
+                                <>{' '}<span className="font-bold text-[#2563EB] whitespace-nowrap">({thirdShiftDispensedById[t.id]})</span></>
+                              )}
                             </span>
                           )
                         ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
@@ -4636,7 +4638,9 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                             ) : (
                               <span className="text-xs font-bold uppercase text-slate-600" title={getThirdShiftDispensedHint(t)}>
                                 Total Medicamento: {t.totalMedicamento}
-                                {thirdShiftDispensedById[t.id] !== undefined && ` (${thirdShiftDispensedById[t.id]})`}
+                                {thirdShiftDispensedById[t.id] !== undefined && (
+                                  <>{' '}<span className="font-bold text-[#2563EB] whitespace-nowrap">({thirdShiftDispensedById[t.id]})</span></>
+                                )}
                               </span>
                             )
                           ) : t.rxType === 'ABIERTA' && t.rxQuantity > 0 ? (
