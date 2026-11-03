@@ -390,6 +390,43 @@ export const planLotRecount = (transactions, medId, rows, { asOf = new Date() } 
   };
 };
 
+// Descarte de medicamento vencido. Los lotes vencidos siguen contando en el
+// saldo y en la existencia por lote (FEFO solo los salta), asi que la unica
+// forma de sacarlos del inventario es un egreso que los consuma. A diferencia
+// de la liberacion del recuento, este egreso SI afecta el saldo global: global y
+// lotes bajan la misma cantidad y la integridad se conserva.
+//
+// lotKeys ("LOTE|AAAA-MM-DD") limita el descarte a los lotes fisicos elegidos;
+// sin el se descartan todos los vencidos. Un lote que vence hoy aun es vigente.
+export const getExpiredLotKey = (lot) => `${lot?.lotNumber}|${lot?.expirationDate}`;
+
+export const planExpiredDisposal = (transactions, medId, { asOf = new Date(), lotKeys = null } = {}) => {
+  const expiredLots = getAvailableLots(transactions, medId, { asOf, includeExpired: true }).filter((lot) => lot.expired);
+  const selection = Array.isArray(lotKeys) ? new Set(lotKeys) : null;
+  const selectedLots = selection ? expiredLots.filter((lot) => selection.has(getExpiredLotKey(lot))) : expiredLots;
+  const errors = [];
+  if (expiredLots.length === 0) errors.push('NO_EXPIRED_LOTS');
+  else if (selectedLots.length === 0) errors.push('NO_LOTS_SELECTED');
+  if (selection) {
+    const known = new Set(expiredLots.map(getExpiredLotKey));
+    if ([...selection].some((key) => !known.has(key))) errors.push('UNKNOWN_EXPIRED_LOT');
+  }
+  const allocations = selectedLots.map((lot) => ({
+    sourceTransactionId: lot.sourceTransactionId,
+    lotNumber: lot.lotNumber,
+    expirationDate: lot.expirationDate,
+    quantity: lot.availableQuantity,
+  }));
+  return {
+    valid: errors.length === 0,
+    errors,
+    expiredLots: condenseLotsByIdentity(expiredLots),
+    expiredTotal: expiredLots.reduce((sum, lot) => sum + lot.availableQuantity, 0),
+    total: allocations.reduce((sum, item) => sum + item.quantity, 0),
+    allocations: errors.length === 0 ? allocations : [],
+  };
+};
+
 // Correccion de digitacion de un lote: cambia numero y/o fecha sin tocar
 // cantidades, por lo que no altera el saldo global. Los egresos guardaron una
 // copia del lote en lotAllocations, asi que devuelve tambien esos movimientos ya

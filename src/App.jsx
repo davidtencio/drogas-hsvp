@@ -63,10 +63,13 @@ import {
   getLotOriginEditState,
   getLotUsage,
   groupLotAllocations,
+  getExpiredLotKey,
   isLotExpired,
+  planExpiredDisposal,
   planLotCorrection,
   planLotRecount,
   summarizeLotIntegrityGate,
+  validateLotAllocations,
   validateLotEntry,
   validateLotInitialization,
 } from './utils/lots';
@@ -188,6 +191,10 @@ const App = () => {
   const [lotExplorerResult, setLotExplorerResult] = useState(null);
   const [lotExplorerLoading, setLotExplorerLoading] = useState(false);
   const [lotExplorerShowDepleted, setLotExplorerShowDepleted] = useState(false);
+  const [disposalLotKeys, setDisposalLotKeys] = useState([]);
+  const [disposalPharmacist, setDisposalPharmacist] = useState(INITIAL_PHARMACISTS[0] || '');
+  const [disposalNote, setDisposalNote] = useState('');
+  const [disposalSaving, setDisposalSaving] = useState(false);
   const [lotReportGenerating, setLotReportGenerating] = useState(false);
   const [adjustLotMode, setAdjustLotMode] = useState('recuento');
   const [adjustLotContext, setAdjustLotContext] = useState(null);
@@ -2042,7 +2049,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       );
       const stock = periodTransactions.reduce((acc, t) => (t.type === 'IN' ? acc + t.amount : acc - t.amount), baseStock);
       const weeklyOut = periodTransactions.reduce((acc, t) => {
-        if (t.type !== 'OUT') return acc;
+        if (t.type !== 'OUT' || t.isExpiredDisposal) return acc;
         const when = t.createdAt ? new Date(t.createdAt) : parseDateTime(t.date);
         if (!when || when < cutoff) return acc;
         return acc + t.amount;
@@ -2062,8 +2069,10 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
   );
 
   const kpiStats = useMemo(() => {
-    // Solo salidas reales: los ajustes manuales de lotes no consumen inventario.
-    const isRealOut = (t) => t.type === 'OUT' && !t.isCierre && t.affectsGlobalStock !== false && !t.isLotAdjustment;
+    // Solo salidas reales: los ajustes manuales de lotes y el descarte de
+    // vencidos sacan existencias, pero no son consumo de los servicios.
+    const isRealOut = (t) =>
+      t.type === 'OUT' && !t.isCierre && t.affectsGlobalStock !== false && !t.isLotAdjustment && !t.isExpiredDisposal;
 
     // 1. Service Consumption (Top 5)
     const serviceConsumption = {};
@@ -2581,6 +2590,7 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       }
       const completeTransactions = loaded;
       const summary = getLotInventorySummary(completeTransactions, medId);
+      setDisposalLotKeys(summary.lots.filter((lot) => lot.expired && lot.availableQuantity > 0).map(getExpiredLotKey));
       setLotExplorerResult({
         medId,
         medName: medications.find((med) => med.id === medId)?.name || medId,
@@ -2596,6 +2606,122 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
       setCloudStatus('Sincronizado');
     } finally {
       setLotExplorerLoading(false);
+    }
+  };
+
+  // Descarte de vencidos: un egreso normal (si afecta el saldo global) cuyas
+  // asignaciones consumen solo lotes vencidos. Saldo global y existencia por
+  // lote bajan lo mismo, asi que la integridad se conserva. No cuenta como
+  // consumo de servicios ni como despacho de turno (isExpiredDisposal).
+  const applyExpiredDisposal = async () => {
+    const medId = lotExplorerResult?.medId;
+    if (!medId || disposalSaving) return;
+    if (!lotInitializationByMedId[medId]?.completed) {
+      alert('Inicialice los lotes de este medicamento antes de descartar vencidos.');
+      return;
+    }
+    if (!authUser || !cloudReady) {
+      alert('Conectese para registrar el descarte con el historial confirmado por el servidor.');
+      return;
+    }
+    if (pendingCount > 0) {
+      alert('Sincronice los movimientos pendientes antes de descartar vencidos.');
+      return;
+    }
+    const pharmacist = toUpper(disposalPharmacist || pharmacists[0] || '');
+    if (!pharmacist) {
+      alert('Seleccione el farmaceutico responsable.');
+      return;
+    }
+    const note = toUpper(disposalNote).trim();
+    const lotKeys = [...disposalLotKeys];
+    if (lotKeys.length === 0) {
+      alert('Seleccione al menos un lote vencido para descartar.');
+      return;
+    }
+    const selectedLots = lotExplorerResult.lots.filter(
+      (lot) => lot.expired && lot.availableQuantity > 0 && lotKeys.includes(getExpiredLotKey(lot)),
+    );
+    const previewTotal = selectedLots.reduce((sum, lot) => sum + lot.availableQuantity, 0);
+    const previewLots = condenseLotsByIdentity(selectedLots)
+      .map((lot) => `${lot.lotNumber} (${formatLotExpirationDate(lot.expirationDate)}): ${lot.quantity}`)
+      .join('; ');
+    const confirmed = await requestStyledConfirm(
+      `Confirme el descarte por vencimiento de ${previewTotal} unidad(es) de ${lotExplorerResult.medName}: ${previewLots}. ` +
+        `El saldo pasara de ${lotExplorerResult.globalStock} a ${lotExplorerResult.globalStock - previewTotal}.`,
+    );
+    if (!confirmed) return;
+    const authorized = await requestSecurityKey();
+    if (!authorized) return;
+    setDisposalSaving(true);
+    setCloudStatus('Registrando descarte de vencidos...');
+    try {
+      // Reverificacion contra Firestore: un egreso o un ajuste registrado
+      // mientras se revisaba cambiaria las cantidades a descartar.
+      const latestLoaded = await loadAllForMed(medId);
+      if (!Array.isArray(latestLoaded)) throw new Error('No se pudo reverificar el estado de lotes.');
+      const plan = planExpiredDisposal(latestLoaded, medId, { lotKeys });
+      const latestGlobalStock = computeMedStock(latestLoaded, medId);
+      if (!plan.valid || plan.total !== previewTotal || latestGlobalStock !== lotExplorerResult.globalStock) {
+        alert(
+          'Las existencias del medicamento cambiaron mientras se revisaba el descarte. ' +
+            'Se recargaron los lotes: revise la seleccion y vuelva a aplicarlo.',
+        );
+        await loadLotExplorer(medId);
+        return;
+      }
+      const createdAt = Date.now();
+      const now = new Date().toLocaleString('es-CR', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true,
+        timeZone: CR_TIMEZONE,
+      });
+      const lotsText = condenseLotsByIdentity(
+        plan.allocations.map((item) => ({ ...item, availableQuantity: item.quantity })),
+      )
+        .map((lot) => `${lot.lotNumber} EXP ${formatLotExpirationDate(lot.expirationDate)} (${lot.quantity})`)
+        .join(', ');
+      const disposal = {
+        id: createdAt,
+        date: now,
+        createdAt,
+        medId,
+        type: 'OUT',
+        amount: plan.total,
+        service: 'DESCARTE POR VENCIMIENTO',
+        cama: '',
+        prescription: '',
+        dosis: '',
+        rxType: 'CERRADA',
+        rxQuantity: 0,
+        rxUsed: 0,
+        pharmacist,
+        observacion: `DESCARTE POR VENCIMIENTO: ${lotsText}${note ? ` · ${note}` : ''}`,
+        isExpiredDisposal: true,
+        lotAllocations: plan.allocations,
+      };
+      const validation = validateLotAllocations(latestLoaded, disposal);
+      if (!validation.valid) throw new Error(`Asignacion invalida: ${validation.errors.join(', ')}`);
+      const batch = writeBatch(db);
+      batch.set(doc(db, dataDocPath, 'transactions', String(disposal.id)), disposal);
+      await batch.commit();
+      setTransactions((prev) => mergeTransactionsById(prev, [disposal]));
+      invalidateLotIntegrity(medId);
+      logSyncEvent('expired_disposal', `medId=${medId} total=${plan.total} lots=${plan.allocations.length}`);
+      setDisposalNote('');
+      setCloudStatus('Sincronizado');
+      alert(`Descarte registrado. Se sacaron ${plan.total} unidad(es) vencidas del inventario.`);
+      await loadLotExplorer(medId);
+    } catch (error) {
+      console.error(error);
+      setCloudStatus('Sin conexion');
+      alert('No se pudo registrar el descarte. No se modifico nada.');
+    } finally {
+      setDisposalSaving(false);
     }
   };
 
@@ -5405,6 +5531,78 @@ ${rows.length ? rows.join('\n') : '| — | SIN MOVIMIENTOS | — | — | — | �
                       )}
                     </div>
                   </div>
+                  {lotExplorerResult.expiredAvailable > 0 && (() => {
+                    const expiredLots = condenseLotsByIdentity(
+                      lotExplorerResult.lots.filter((lot) => lot.expired && lot.availableQuantity > 0),
+                    );
+                    const selectedTotal = expiredLots
+                      .filter((lot) => disposalLotKeys.includes(getExpiredLotKey(lot)))
+                      .reduce((sum, lot) => sum + lot.quantity, 0);
+                    return (
+                      <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+                        <h4 className="font-bold text-rose-800 text-xs uppercase tracking-wider">Descartar medicamento vencido</h4>
+                        <p className="text-[11px] text-rose-700 mt-1">
+                          Registra un egreso &quot;DESCARTE POR VENCIMIENTO&quot; que saca del inventario los lotes vencidos
+                          seleccionados. Baja el saldo global y la existencia por lote en la misma cantidad y no cuenta
+                          como consumo de servicios.
+                        </p>
+                        {!lotExplorerResult.initialized ? (
+                          <p className="mt-3 text-[11px] text-rose-800">
+                            Inicialice los lotes de este medicamento para poder descartar vencidos. Mientras tanto use
+                            el ajuste manual de saldo.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="mt-3 space-y-1">
+                              {expiredLots.map((lot) => {
+                                const key = getExpiredLotKey(lot);
+                                return (
+                                  <label key={key} className="flex items-center gap-2 text-xs text-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={disposalLotKeys.includes(key)}
+                                      onChange={(e) =>
+                                        setDisposalLotKeys((prev) =>
+                                          e.target.checked ? [...new Set([...prev, key])] : prev.filter((item) => item !== key),
+                                        )
+                                      }
+                                      className="h-4 w-4 rounded border-slate-300"
+                                    />
+                                    <span className="font-bold">{lot.lotNumber}</span>
+                                    <span className="text-slate-500">exp. {formatLotExpirationDate(lot.expirationDate)}</span>
+                                    <span className="ml-auto font-bold">{lot.quantity} und.</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                              <SelectLabel
+                                label="Farmaceutico"
+                                name="disposalPharmacist"
+                                options={pharmacists}
+                                value={disposalPharmacist}
+                                onChange={(e) => setDisposalPharmacist(e.target.value)}
+                              />
+                              <InputLabel
+                                label="Observacion (acta, destino)"
+                                name="disposalNote"
+                                value={disposalNote}
+                                onChange={(e) => setDisposalNote(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                onClick={applyExpiredDisposal}
+                                disabled={disposalSaving || selectedTotal === 0}
+                                className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {disposalSaving ? 'Registrando...' : `Descartar ${selectedTotal} und.`}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
