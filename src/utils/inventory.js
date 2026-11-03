@@ -91,6 +91,7 @@ export const isThirdShiftClosure = (t) =>
   Boolean(t?.isCierre) && ['TERCERO', 'TERCER TURNO'].includes(String(t.cierreTurno || '').trim().toUpperCase());
 
 // Despachos entre cierres consecutivos de tercer turno del mismo medicamento.
+// El descarte de vencidos baja el saldo pero no es un despacho.
 // Requiere el historial completo, antes de filtros y paginacion. El primer
 // cierre no tiene un periodo conocido y se omite (no equivale a cero salidas).
 export const getThirdShiftDispensedByClosureId = (transactions, medId) => {
@@ -104,7 +105,7 @@ export const getThirdShiftDispensedByClosureId = (transactions, medId) => {
       hasPreviousClosure = true;
       dispensed = 0;
     } else if (hasPreviousClosure && t.type === 'OUT' && !t.isCierre &&
-      t.affectsGlobalStock !== false && !t.isLotAdjustment) {
+      t.affectsGlobalStock !== false && !t.isLotAdjustment && !t.isExpiredDisposal) {
       const amount = Number(t.amount);
       if (Number.isFinite(amount) && amount > 0) dispensed += amount;
     }

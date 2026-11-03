@@ -49,6 +49,7 @@ describe('despachos entre cierres de Tercer Turno', () => {
       out(3, '30/10/2026 8:00 AM', 10, { type: 'IN' }),
       out(4, '30/10/2026 9:00 AM', 8, { affectsGlobalStock: false }),
       out(5, '30/10/2026 10:00 AM', 6, { isLotAdjustment: true }),
+      out(51, '30/10/2026 10:30 AM', 4, { isExpiredDisposal: true }),
       close(6, '30/10/2026 11:00 AM', 100, 'AJUSTE MANUAL SALDO'),
       out(7, '30/10/2026 12:00 PM', 50, { medId: 'med-b' }),
       out(8, '30/10/2026 1:00 PM', 2, { rxType: 'ABIERTA', rxUsed: 20, rxQuantity: 30 }),

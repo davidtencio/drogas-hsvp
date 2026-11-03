@@ -12,6 +12,7 @@ import {
   getDaysUntilExpiration,
   isLotExpired,
   isValidExpirationDate,
+  planExpiredDisposal,
   planLotCorrection,
   planLotRecount,
   summarizeLotIntegrityGate,
@@ -533,5 +534,58 @@ describe('release gate lot integrity summary', () => {
     const summary = summarizeLotIntegrityGate([], {}, {});
     expect(summary.ok).toBe(false);
     expect(summary.details).toEqual(['No hay medicamentos registrados.']);
+  });
+});
+
+describe('expired lot disposal', () => {
+  const history = [
+    ingreso(1, 10, 'VENC-A', '2026-06-30', 1_000),
+    ingreso(2, 5, 'VENC-B', '2026-07-12', 2_000),
+    ingreso(3, 3, 'VENC-A', '2026-06-30', 2_500),
+    ingreso(4, 20, 'HOY', '2026-07-13', 3_000),
+    ingreso(5, 8, 'VIGENTE', '2027-01-31', 4_000),
+    egreso(6, 4, [allocation(1, 'VENC-A', '2026-06-30', 4)]),
+  ];
+
+  it('discards every expired lot with its remaining quantity and keeps lots expiring today', () => {
+    const plan = planExpiredDisposal(history, MED_ID, { asOf: AS_OF });
+    expect(plan.valid).toBe(true);
+    expect(plan.total).toBe(14);
+    expect(plan.expiredTotal).toBe(14);
+    expect(plan.allocations).toEqual([
+      allocation(1, 'VENC-A', '2026-06-30', 6),
+      allocation(3, 'VENC-A', '2026-06-30', 3),
+      allocation(2, 'VENC-B', '2026-07-12', 5),
+    ]);
+    expect(plan.expiredLots).toEqual([
+      { lotNumber: 'VENC-A', expirationDate: '2026-06-30', quantity: 9, originCount: 2 },
+      { lotNumber: 'VENC-B', expirationDate: '2026-07-12', quantity: 5, originCount: 1 },
+    ]);
+  });
+
+  it('produces an egress that passes allocation validation and leaves only valid lots', () => {
+    const plan = planExpiredDisposal(history, MED_ID, { asOf: AS_OF });
+    const disposal = egreso(7, plan.total, plan.allocations, { isExpiredDisposal: true });
+    expect(validateLotAllocations(history, disposal)).toEqual({ valid: true, errors: [] });
+    const after = getLotInventorySummary([...history, disposal], MED_ID, { asOf: AS_OF });
+    expect(after.expiredAvailable).toBe(0);
+    expect(after.totalAvailable).toBe(28);
+  });
+
+  it('limits the disposal to the selected physical lots', () => {
+    const plan = planExpiredDisposal(history, MED_ID, { asOf: AS_OF, lotKeys: ['VENC-B|2026-07-12'] });
+    expect(plan.valid).toBe(true);
+    expect(plan.total).toBe(5);
+    expect(plan.allocations).toEqual([allocation(2, 'VENC-B', '2026-07-12', 5)]);
+  });
+
+  it('rejects empty, unknown or missing selections', () => {
+    expect(planExpiredDisposal(history, MED_ID, { asOf: AS_OF, lotKeys: [] }).errors).toEqual(['NO_LOTS_SELECTED']);
+    expect(planExpiredDisposal(history, MED_ID, { asOf: AS_OF, lotKeys: ['HOY|2026-07-13'] }).errors).toEqual([
+      'NO_LOTS_SELECTED',
+      'UNKNOWN_EXPIRED_LOT',
+    ]);
+    const none = planExpiredDisposal(history, MED_ID, { asOf: '2026-01-01' });
+    expect(none).toMatchObject({ valid: false, errors: ['NO_EXPIRED_LOTS'], total: 0, allocations: [] });
   });
 });
