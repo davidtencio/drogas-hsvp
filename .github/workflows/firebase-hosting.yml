@@ -49,6 +49,29 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # Las reglas van ANTES que el hosting a proposito. La proteccion del
+      # servidor debe estar puesta antes de que salga la interfaz que la asume;
+      # al reves quedaria una ventana con la UI nueva y las reglas viejas. El
+      # orden inverso es seguro: mientras la coleccion closureLocks este vacia,
+      # las reglas nuevas no congelan nada y la interfaz anterior no se entera.
+      # Si este paso falla, el hosting no se despliega.
+      - name: Deploy Firestore rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DROGAS_HSVP }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "Missing FIREBASE_SERVICE_ACCOUNT_DROGAS_HSVP. Aborting deploy."
+            exit 1
+          fi
+          CREDENTIALS_FILE="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$CREDENTIALS_FILE"
+          trap 'rm -f "$CREDENTIALS_FILE"' EXIT
+          GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIALS_FILE" \
+            npx --yes firebase-tools@15 deploy \
+              --only firestore:rules \
+              --project drogas-hsvp \
+              --non-interactive
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
